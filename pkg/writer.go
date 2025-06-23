@@ -87,7 +87,7 @@ func (c *FlashbackWriter) next() {
 	c.currentIOWriter.Close()
 	c.cache = nil
 	c.currentFilePartId += 1
-	c.currentFileName = fmt.Sprintf("%s.%03d.sql", c.filePrefix, c.currentFilePartId)
+	c.currentFileName = fmt.Sprintf(".%s.%04d.sql", c.filePrefix, c.currentFilePartId)
 	c.filePartNames = append(c.filePartNames, c.currentFileName)
 	c.currentIOWriter, _ = os.Create(c.currentFileName)
 }
@@ -133,7 +133,7 @@ func NewFlashbackWriter(filePrefix string, cacheSize int, outputWriter io.WriteC
 		maxCacheSize: cacheSize,
 		mergedWriter: outputWriter,
 	}
-	bc.currentFileName = fmt.Sprintf("%s.%03d.sql", filePrefix, bc.currentFilePartId)
+	bc.currentFileName = fmt.Sprintf(".%s.%04d.sql", filePrefix, bc.currentFilePartId)
 	bc.filePartNames = append(bc.filePartNames, bc.currentFileName)
 	bc.currentIOWriter, _ = os.Create(bc.currentFileName)
 	return bc

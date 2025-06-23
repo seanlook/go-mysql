@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strings"
 	"time"
 
 	"github.com/dlclark/regexp2"
@@ -17,7 +18,6 @@ import (
 	"github.com/expr-lang/expr/vm"
 	"github.com/go-mysql-org/go-mysql/pkg"
 	"github.com/pingcap/tidb/pkg/parser"
-	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pkg/errors"
 	"github.com/spf13/viper"
 )
@@ -334,21 +334,28 @@ func (p *BinlogParser) ParseFileAndPrint(fileName string, resultFileName string)
 		case QUERY_EVENT:
 			qe := e.Event.(*QueryEvent)
 			buf := bytes.NewBuffer(nil)
-			if p.Flashback && qe.DbTableMatched {
+			if p.Flashback && qe.DbTableMatched && qe.PrintType != PrintTypeIgnore {
 				return errors.Errorf("statement error: %s", qe.Query)
 			} else if p.TableFilter == nil || (p.TableFilter != nil && qe.DbTableMatched) {
 				buf.WriteString(fmt.Sprintf("# at %d\n", e.Header.LogPos-e.Header.EventSize))
 				buf.WriteString(fmt.Sprintf("# Timestamp=%s ServerId=%d EventType=%s EndLogPos=%d Db=%s",
 					unixTimeToStr(e.Header.Timestamp), e.Header.ServerID, e.Header.EventType.String(), e.Header.LogPos, qe.Schema) + "\n")
-				buf.WriteString(fmt.Sprintf("%s%s\n", p.begin, p.delimiter))
-
-				if string(qe.Schema) != "" {
-					buf.WriteString(fmt.Sprintf("USE `%s`%s\n", qe.Schema, p.delimiter))
+				if strings.EqualFold(p.begin, string(qe.Query)) { // begin
+					buf.WriteString(fmt.Sprintf("%s%s\n", p.begin, p.delimiter))
+				} else {
+					if string(qe.Schema) != "" {
+						buf.WriteString(fmt.Sprintf("USE `%s`%s\n", qe.Schema, p.delimiter))
+					}
+					buf.WriteString(fmt.Sprintf("SET TIMESTAMP=%d%s\n", e.Header.Timestamp, p.delimiter))
+					if qe.PrintType == PrintTypeIgnore {
+						query := "# " + strings.ReplaceAll(string(qe.Query), "\n", "# \n")
+						buf.WriteString(query)
+					} else {
+						buf.Write(qe.Query)
+					}
+					buf.WriteString("\n" + p.delimiter + "\n")
+					buf.WriteString(fmt.Sprintf("%s%s\n", p.commit, p.delimiter))
 				}
-				buf.WriteString(fmt.Sprintf("SET TIMESTAMP=%d%s\n", e.Header.Timestamp, p.delimiter))
-				buf.Write(qe.Query)
-				buf.WriteString("\n" + p.delimiter + "\n")
-				buf.WriteString(fmt.Sprintf("%s%s\n", p.commit, p.delimiter))
 			} else {
 				if !p.short {
 					buf.WriteString(fmt.Sprintf("# at %d\n", e.Header.LogPos-e.Header.EventSize))
@@ -357,6 +364,10 @@ func (p *BinlogParser) ParseFileAndPrint(fileName string, resultFileName string)
 				}
 				// 不打印 statement
 			}
+			ioWriter.Write(buf.Bytes())
+		case XID_EVENT:
+			buf := bytes.NewBuffer(nil)
+			buf.WriteString(fmt.Sprintf("%s%s\n", p.commit, p.delimiter))
 			ioWriter.Write(buf.Bytes())
 		default:
 			if !p.short {
@@ -584,7 +595,7 @@ func (p *BinlogParser) ParseEvent2(h *EventHeader, data []byte, rawData *[]byte)
 			re.rawBytesNew = *rawData
 			err = p.rowsEventDecodeFunc(re, data) // todo handle err?
 			if len(re.rawBytesNew) > EventHeaderSize {
-				if p.format != nil && p.format.ChecksumAlgorithm == BINLOG_CHECKSUM_ALG_CRC32 {
+				if p.format != nil && p.originalChecksumAlgorithm == BINLOG_CHECKSUM_ALG_CRC32 {
 					re.rawBytesNew = append(re.rawBytesNew, p.computeCrc32Checksum(re.rawBytesNew)...)
 				}
 				eventSizeBuff := make([]byte, 4)
@@ -605,10 +616,12 @@ func (p *BinlogParser) ParseEvent2(h *EventHeader, data []byte, rawData *[]byte)
 			stmts, _, err := sqlParser.Parse(string(qe.Query), "", "")
 			if err != nil {
 				fmt.Printf("parse query(%s) err %v, will skip this event\n", qe.Query, err)
+				return nil, nil, err
 				//return nil
 			}
 			for _, stmt := range stmts {
-				nodes := ParseStmt(stmt)
+				allowed, nodes := ParseStmt(stmt)
+				// allowed is true 代表 ddl只是 add index,drop index，是可以忽略的
 				for _, node := range nodes {
 					if node.Schema == "" {
 						node.Schema = string(qe.Schema)
@@ -619,6 +632,11 @@ func (p *BinlogParser) ParseEvent2(h *EventHeader, data []byte, rawData *[]byte)
 					tbMatch, _ := p.TableFilter.Compiled.TbFilter.MatchString(dbTableName)
 					if tbMatch {
 						qe.DbTableMatched = true
+						if allowed {
+							qe.PrintType = PrintTypeIgnore
+							//e = qe // 增加了 print type 属性
+							continue
+						}
 						if p.Flashback {
 							return nil, nil, errors.Errorf("flashback rows found statement [%s] table matched: [%s]",
 								qe.Query, dbTableName)
@@ -680,112 +698,4 @@ func (p *BinlogParser) computeCrc32Checksum(rawData []byte) []byte {
 	computed := make([]byte, BinlogChecksumLength)
 	binary.LittleEndian.PutUint32(computed, checksum)
 	return computed
-}
-
-type SchemaNode struct {
-	Schema string
-	Table  string
-}
-
-// alter table add column xxx  -> alter table drop column xxx
-// alter table add index, drop index -> ok
-// drop table, truncate table, alter table modify column xxx, drop column -> no
-
-func ParseStmt(stmt ast.StmtNode) (ns []*SchemaNode) {
-	switch t := stmt.(type) {
-	case *ast.RenameTableStmt:
-		ns = make([]*SchemaNode, len(t.TableToTables))
-		for i, tableInfo := range t.TableToTables {
-			ns[i] = &SchemaNode{
-				Schema: tableInfo.OldTable.Schema.String(),
-				Table:  tableInfo.OldTable.Name.String(),
-			}
-		}
-	case *ast.AlterTableStmt:
-		n := &SchemaNode{
-			Schema: t.Table.Schema.String(),
-			Table:  t.Table.Name.String(),
-		}
-		ns = []*SchemaNode{n}
-		if len(t.Specs) > 0 {
-			for _, spec := range t.Specs {
-				if spec.Tp == ast.AlterTableAddColumns {
-					//fmt.Println("AlterTableAddColumns", spec.Name, spec.Text())
-				} else if spec.Tp == ast.AlterTableDropIndex {
-					//fmt.Println("AlterTableDropIndex", spec.IndexName, spec.Text())
-				} else if spec.Tp == ast.AlterTableAddConstraint {
-					//fmt.Println("AlterTableAddConstraint-Index", spec.IndexName, spec.OriginalText())
-				} else {
-					//fmt.Println("AlterTableStmt-XX", spec.Tp, spec.OriginalText())
-				}
-			}
-		}
-	case *ast.DropTableStmt:
-		ns = make([]*SchemaNode, len(t.Tables))
-		for i, table := range t.Tables {
-			ns[i] = &SchemaNode{
-				Schema: table.Schema.String(),
-				Table:  table.Name.String(),
-			}
-		}
-	case *ast.CreateTableStmt:
-		n := &SchemaNode{
-			Schema: t.Table.Schema.String(),
-			Table:  t.Table.Name.String(),
-		}
-		ns = []*SchemaNode{n}
-	case *ast.TruncateTableStmt:
-		n := &SchemaNode{
-			Schema: t.Table.Schema.String(),
-			Table:  t.Table.Name.String(),
-		}
-		ns = []*SchemaNode{n}
-	case *ast.CreateIndexStmt:
-		n := &SchemaNode{
-			Schema: t.Table.Schema.String(),
-			Table:  t.Table.Name.String(),
-		}
-		ns = []*SchemaNode{n}
-	case *ast.DropIndexStmt:
-		n := &SchemaNode{
-			Schema: t.Table.Schema.String(),
-			Table:  t.Table.Name.String(),
-		}
-		ns = []*SchemaNode{n}
-	case *ast.InsertStmt:
-		tableSource := t.Table.TableRefs.Left.(*ast.TableSource)
-		table, ok := tableSource.Source.(*ast.TableName)
-		if !ok || table == nil {
-			return nil
-		}
-		n := &SchemaNode{
-			Schema: table.Schema.String(),
-			Table:  table.Name.String(),
-		}
-		ns = []*SchemaNode{n}
-	case *ast.DeleteStmt:
-		tableSource := t.TableRefs.TableRefs.Left.(*ast.TableSource)
-		table, ok := tableSource.Source.(*ast.TableName)
-		if !ok || table == nil {
-			return nil
-		}
-		//GetTables()
-		n := &SchemaNode{
-			Schema: table.Schema.String(),
-			Table:  table.Name.String(),
-		}
-		ns = []*SchemaNode{n}
-	case *ast.UpdateStmt:
-		tableSource := t.TableRefs.TableRefs.Left.(*ast.TableSource)
-		table, ok := tableSource.Source.(*ast.TableName)
-		if !ok || table == nil {
-			return nil
-		}
-		n := &SchemaNode{
-			Schema: table.Schema.String(),
-			Table:  table.Name.String(),
-		}
-		ns = []*SchemaNode{n}
-	}
-	return ns
 }

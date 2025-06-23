@@ -950,6 +950,7 @@ type RowsEvent struct {
 
 	// rows: all return types from RowsEvent.decodeValue()
 	Rows           [][]interface{}
+	RowsOnDisk     []string
 	SkippedColumns [][]int
 
 	parseTime               bool

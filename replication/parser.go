@@ -45,13 +45,14 @@ type BinlogParser struct {
 
 	tableMapOptionalMetaDecodeFunc func([]byte) error
 
-	Flashback         bool
-	ConvUpdateToWrite bool
-	TableFilter       *db_table_filter.DbTableFilter
-	RowsFilter        *RowsFilter
-	EventTypeFilter   []EventType
-	TimeFilter        *TimeFilter
-	RenameRule        *pkg.RenameRule
+	Flashback                 bool
+	ConvUpdateToWrite         bool
+	TableFilter               *db_table_filter.DbTableFilter
+	RowsFilter                *RowsFilter
+	EventTypeFilter           []EventType
+	TimeFilter                *TimeFilter
+	RenameRule                *pkg.RenameRule
+	originalChecksumAlgorithm byte
 
 	*PrintEventInfo
 }
@@ -172,11 +173,37 @@ func (p *BinlogParser) parseSingleEvent(r io.Reader, onEvent OnEventFunc) (bool,
 	if len(body) != bodyLen {
 		return false, errors.Errorf("invalid body data size in event %s, need %d but got %d", h.EventType, bodyLen, len(body))
 	}
-
 	var e Event
 	p.SetRowsEventDecodeFunc(flashbackRowsEventFunc)
+
 	rawFlashbacked := make([]byte, len(rawData)) // flashback, RowsFilter 才需要新的 bytes buff，TableFilter不需要
 	copy(rawFlashbacked, rawData)
+	if bodyLen > 10*1024*1024 {
+		fmt.Println("xxxx bodyLen ", bodyLen, len(rawFlashbacked))
+	}
+	if h.EventType == TRANSACTION_PAYLOAD_EVENT {
+		e, _, err = p.ParseEvent2(h, body, &rawFlashbacked)
+		if err != nil {
+			if err == errMissingTableMapEvent {
+				return false, nil
+			}
+			return false, errors.Trace(err)
+		}
+		if pe, ok := e.(*TransactionPayloadEvent); ok {
+			p.originalChecksumAlgorithm = p.format.ChecksumAlgorithm
+			p.format.ChecksumAlgorithm = BINLOG_CHECKSUM_ALG_OFF
+			for _, subEvRawdata := range pe.EventsBytes {
+				newBuf := bytes.NewBuffer(subEvRawdata)
+				_, err := p.parseSingleEvent(newBuf, onEvent)
+				if err != nil {
+					return false, errors.Trace(err)
+				}
+			}
+			p.format.ChecksumAlgorithm = p.originalChecksumAlgorithm
+		}
+		return false, nil
+	}
+
 	e, rawFlashbacked, err = p.ParseEvent2(h, body, &rawFlashbacked)
 	if err != nil {
 		if err == errMissingTableMapEvent {

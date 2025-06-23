@@ -362,6 +362,17 @@ func (e *XIDEvent) Dump(w io.Writer) {
 	fmt.Fprintln(w)
 }
 
+type EventPrintType int
+
+const (
+	// PrintTypeNormal normal print
+	PrintTypeNormal EventPrintType = 0
+	// PrintTypeIgnore print to comment
+	PrintTypeIgnore EventPrintType = 1
+	// PrintTypeSkip do not print
+	PrintTypeSkip EventPrintType = 2
+)
+
 type QueryEvent struct {
 	SlaveProxyID  uint32
 	ExecutionTime uint32
@@ -378,6 +389,7 @@ type QueryEvent struct {
 
 	dbTable        []*SchemaNode
 	DbTableMatched bool
+	PrintType      EventPrintType
 }
 
 func (e *QueryEvent) Decode(data []byte) error {

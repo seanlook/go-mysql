@@ -33,6 +33,8 @@ type TransactionPayloadEvent struct {
 	CompressionType  uint64
 	Payload          []byte
 	Events           []*BinlogEvent
+	// EventsBytes save raw event buffer bytes
+	EventsBytes [][]byte
 }
 
 func (e *TransactionPayloadEvent) compressionType() string {
@@ -140,11 +142,11 @@ func (e *TransactionPayloadEvent) decodePayload() error {
 				eventLength, offset, payloadUncompressedLength)
 		}
 		data := payloadUncompressed[offset : offset+eventLength]
-
 		pe, err := parser.Parse(data)
 		if err != nil {
 			return err
 		}
+		e.EventsBytes = append(e.EventsBytes, data)
 		e.Events = append(e.Events, pe)
 
 		offset += eventLength
