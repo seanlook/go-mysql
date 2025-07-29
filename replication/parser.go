@@ -178,9 +178,6 @@ func (p *BinlogParser) parseSingleEvent(r io.Reader, onEvent OnEventFunc) (bool,
 
 	rawFlashbacked := make([]byte, len(rawData)) // flashback, RowsFilter 才需要新的 bytes buff，TableFilter不需要
 	copy(rawFlashbacked, rawData)
-	if bodyLen > 10*1024*1024 {
-		fmt.Println("xxxx bodyLen ", bodyLen, len(rawFlashbacked))
-	}
 	if h.EventType == TRANSACTION_PAYLOAD_EVENT {
 		e, _, err = p.ParseEvent2(h, body, &rawFlashbacked)
 		if err != nil {

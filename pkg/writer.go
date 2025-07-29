@@ -63,14 +63,12 @@ func (c *FlashbackWriter) Write(p []byte) (n int, err error) {
 	c.currentIndex += 1
 	c.currentWritten += len(p)
 	if c.currentWritten >= c.maxCacheSize {
-		c.currentIOWriter.Write([]byte("\nDELIMITER ;\n"))
-		//time.Sleep(60 * time.Second)
 		c.currentWritten = 0
 		c.currentIndex = 0
 		for i := len(c.cache); i > 0; i-- {
-			if i == len(c.cache) {
-				c.currentIOWriter.Write(c.cacheHeader)
-			}
+			//if i == len(c.cache) {
+			//	c.currentIOWriter.Write(c.cacheHeader)
+			//}
 			_, err = c.currentIOWriter.Write(c.cache[i-1])
 			if err != nil {
 				return 0, err
@@ -87,7 +85,7 @@ func (c *FlashbackWriter) next() {
 	c.currentIOWriter.Close()
 	c.cache = nil
 	c.currentFilePartId += 1
-	c.currentFileName = fmt.Sprintf(".%s.%04d.sql", c.filePrefix, c.currentFilePartId)
+	c.currentFileName = fmt.Sprintf("%s.%04d.sql", c.filePrefix, c.currentFilePartId)
 	c.filePartNames = append(c.filePartNames, c.currentFileName)
 	c.currentIOWriter, _ = os.Create(c.currentFileName)
 }
@@ -101,28 +99,34 @@ func (c *FlashbackWriter) SetFooter(s []byte) {
 
 // Close 如果 mergedWriter != nil，则会合并文件
 func (c *FlashbackWriter) Close() (err error) {
-	c.currentIOWriter.Write(c.cacheHeader)
+	//c.currentIOWriter.Write(c.cacheHeader)
 	for i := len(c.cache); i > 0; i-- {
 		_, err = c.currentIOWriter.Write(c.cache[i-1])
 		if err != nil {
 			return err
 		}
 	}
-	c.currentIOWriter.Write(c.cacheFooter)
 	c.cache = nil
 	if err = c.currentIOWriter.Close(); err != nil {
 		return err
 	}
 	if c.mergedWriter != nil {
+		c.mergedWriter.Write(c.cacheHeader)
 		defer c.mergedWriter.Close()
-		for _, srcFileName := range c.filePartNames {
+		for i := len(c.filePartNames); i > 0; i-- {
+			srcFileName := c.filePartNames[i-1]
+			//time.Sleep(1 * time.Second)
+			//fmt.Println("xxxx", srcFileName)
 			srcFile, err := os.OpenFile(srcFileName, os.O_RDONLY, 0644)
 			if _, err = io.Copy(c.mergedWriter, srcFile); err != nil {
 				return errors.WithMessagef(err, "merge file from %s to output", srcFileName)
-			} else if err = os.Remove(srcFileName); err != nil {
+			}
+			_ = srcFile.Close()
+			if err = os.Remove(srcFileName); err != nil {
 				return errors.WithMessagef(err, "remove file part %s", srcFileName)
 			}
 		}
+		c.mergedWriter.Write(c.cacheFooter)
 	}
 	return
 }
@@ -133,7 +137,7 @@ func NewFlashbackWriter(filePrefix string, cacheSize int, outputWriter io.WriteC
 		maxCacheSize: cacheSize,
 		mergedWriter: outputWriter,
 	}
-	bc.currentFileName = fmt.Sprintf(".%s.%04d.sql", filePrefix, bc.currentFilePartId)
+	bc.currentFileName = fmt.Sprintf("%s.%04d.sql", filePrefix, bc.currentFilePartId)
 	bc.filePartNames = append(bc.filePartNames, bc.currentFileName)
 	bc.currentIOWriter, _ = os.Create(bc.currentFileName)
 	return bc

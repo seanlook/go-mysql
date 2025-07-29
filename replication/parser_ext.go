@@ -107,7 +107,7 @@ func (i *PrintEventInfo) Init() {
 func (p *BinlogParser) ParseFileAndPrint(fileName string, resultFileName string) (err error) {
 	var outputWriter io.WriteCloser
 	if resultFileName != "" {
-		outputWriter, err = os.OpenFile(resultFileName, os.O_CREATE|os.O_WRONLY, 0644)
+		outputWriter, err = os.OpenFile(resultFileName, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0644)
 		if err != nil {
 			return err
 		}
@@ -130,6 +130,7 @@ func (p *BinlogParser) ParseFileAndPrint(fileName string, resultFileName string)
 		case FORMAT_DESCRIPTION_EVENT:
 			r := e.Event.(*FormatDescriptionEvent)
 			buf := bytes.NewBuffer(nil)
+			buf.WriteString("\nDELIMITER ;\n")
 			buf.WriteString("/*!50530 SET @@SESSION.PSEUDO_SLAVE_MODE=1*/;\n")
 			if p.disableLogBin {
 				buf.WriteString("/*!32316 SET @OLD_SQL_LOG_BIN=@@SQL_LOG_BIN, SQL_LOG_BIN=0*/;\n")
@@ -365,10 +366,13 @@ func (p *BinlogParser) ParseFileAndPrint(fileName string, resultFileName string)
 				// 不打印 statement
 			}
 			ioWriter.Write(buf.Bytes())
-		case XID_EVENT:
-			buf := bytes.NewBuffer(nil)
-			buf.WriteString(fmt.Sprintf("%s%s\n", p.commit, p.delimiter))
-			ioWriter.Write(buf.Bytes())
+			/*
+				case XID_EVENT:
+					buf := bytes.NewBuffer(nil)
+					buf.WriteString(fmt.Sprintf("%s%s\n", p.commit, p.delimiter))
+					ioWriter.Write(buf.Bytes())
+
+			*/
 		default:
 			if !p.short {
 				buf := bytes.NewBuffer(nil)
@@ -595,7 +599,7 @@ func (p *BinlogParser) ParseEvent2(h *EventHeader, data []byte, rawData *[]byte)
 			re.rawBytesNew = *rawData
 			err = p.rowsEventDecodeFunc(re, data) // todo handle err?
 			if len(re.rawBytesNew) > EventHeaderSize {
-				if p.format != nil && p.originalChecksumAlgorithm == BINLOG_CHECKSUM_ALG_CRC32 {
+				if p.format != nil && p.format.ChecksumAlgorithm == BINLOG_CHECKSUM_ALG_CRC32 {
 					re.rawBytesNew = append(re.rawBytesNew, p.computeCrc32Checksum(re.rawBytesNew)...)
 				}
 				eventSizeBuff := make([]byte, 4)

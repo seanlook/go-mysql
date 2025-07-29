@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"encoding/binary"
 	"fmt"
-	"os"
 
 	"github.com/expr-lang/expr"
 	. "github.com/go-mysql-org/go-mysql/mysql"
@@ -105,8 +104,6 @@ func (e *RowsEvent) FlashbackData2(pos int, data []byte) (err2 error) {
 		"col": []interface{}{},
 	}
 
-	var lastCachedPos int
-	var cacheFileIndex int
 	for pos < len(data) {
 		var bufImage1 []byte
 		var bufImage2 []byte
@@ -152,16 +149,6 @@ func (e *RowsEvent) FlashbackData2(pos int, data []byte) (err2 error) {
 			e.rawBytesNew = append(e.rawBytesNew, bufImage1...)
 		} else {
 			e.Rows = e.Rows[:len(e.Rows)-1]
-		}
-		if pos-lastCachedPos > 10*1024*1024 {
-			buf := bytes.NewBuffer(e.rawBytesNew)
-			cacheFileName := fmt.Sprintf("/data/dbbak/binlogparse.buf.%d", cacheFileIndex)
-			tmpFile, _ := os.OpenFile(cacheFileName, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0644)
-			buf.WriteTo(tmpFile)
-
-			e.rawBytesNew = []byte{} // reset
-			lastCachedPos = pos
-			cacheFileIndex += 1
 		}
 	}
 	if e.rowsFilter != nil && e.RowsMatched == 0 {
