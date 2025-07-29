@@ -111,7 +111,7 @@ func (c *FlashbackWriter) Close() (err error) {
 		return err
 	}
 	if c.mergedWriter != nil {
-		c.mergedWriter.Write(c.cacheHeader)
+		_, _ = c.mergedWriter.Write(c.cacheHeader)
 		defer c.mergedWriter.Close()
 		for i := len(c.filePartNames); i > 0; i-- {
 			srcFileName := c.filePartNames[i-1]
@@ -126,7 +126,7 @@ func (c *FlashbackWriter) Close() (err error) {
 				return errors.WithMessagef(err, "remove file part %s", srcFileName)
 			}
 		}
-		c.mergedWriter.Write(c.cacheFooter)
+		_, _ = c.mergedWriter.Write(c.cacheFooter)
 	}
 	return
 }

@@ -75,7 +75,7 @@ Flags:
 
 # 也可以指定 %, * 这样的模式匹配
 # * 只能单独使用，标识所有，%必须结合其它字符串使用
-./gomysqlbinlog -v 1 --databases db1,xiaog% --tables '*' -f binlog.00002 \
+./gomysqlbinlog -v 1 --databases db1,table% --tables '*' -f binlog.00002 \
   --idempotent --rows-filter "col[0] == 'abc'"
 ```
 
@@ -106,9 +106,148 @@ rows-filter 过滤有两种方式：
   -r binlog.00002.back.sql
 ```
 
+### 逆向示例：
+
+```
+./gomysqlbinlog --flashback --databases test --tables 'tabletest1' -v 1 -f  binlog.000013
+```
+
+原 binlog 内容：  
+```
+#250729 18:04:24 server id 81482679  end_log_pos 2857 CRC32 0xc7c1c14c  Delete_rows: table id 2690 flags: STMT_END_F
+
+BINLOG '
+qJyIaBO3U9sERwAAAMgKAAAAAIIKAAAAAAEABHRlc3QACnhpYW9ndGVzdDEACQMPDwj8/BIRBAke
+AB4AAgIAAAT8ABjtT6c=
+qJyIaCC3U9sEYQAAACkLAAAAAIIKAAAAAAEAAgAJ//8A/gQAAAAEY2NjYwQzMzMzMHUAAAAAAAAK
+AGNjY2NjY2NjY2MKAGNjY2NjY2NjY2OZtzsebGiImxjNVFBFTMHBxw==
+'/*!*/;
+### DELETE FROM `test`.`tabletest1`
+### WHERE
+###   @1=4 /* INT meta=0 nullable=0 is_null=0 */
+###   @2='cccc' /* VARSTRING(30) meta=30 nullable=0 is_null=0 */
+###   @3='3333' /* VARSTRING(30) meta=30 nullable=1 is_null=0 */
+###   @4=30000 /* LONGINT meta=0 nullable=1 is_null=0 */
+###   @5='cccccccccc' /* BLOB/TEXT meta=2 nullable=1 is_null=0 */
+###   @6='cccccccccc' /* BLOB/TEXT meta=2 nullable=1 is_null=0 */
+###   @7='2025-07-29 17:57:44' /* DATETIME(0) meta=0 nullable=1 is_null=0 */
+###   @8=1753783064 /* TIMESTAMP(0) meta=0 nullable=1 is_null=0 */
+###   @9=3333.3               /* FLOAT meta=4 nullable=0 is_null=0 */
+# at 2857
+```
+
+逆向之后变成：
+```
+BINLOG '
+qJyIaBO3U9sERwAAAMgKAAAAAIIKAAAAAAEABHRlc3QACnhpYW9ndGVzdDEACQMPDwj8/BIRBAke
+AB4AAgIAAAT8ABjtT6c=
+qJyIaB63U9sEYQAAACkLAAAAAIIKAAAAAAEAAgAJ//8A/gQAAAAEY2NjYwQzMzMzMHUAAAAAAAAK
+AGNjY2NjY2NjY2MKAGNjY2NjY2NjY2OZtzsebGiImxjNVFBF8YTdFw==
+'/*!*/;
+### INSERT INTO `test`.`tabletest1`
+### SET
+###   col[0]=4
+###   col[1]='cccc'
+###   col[2]='3333'
+###   col[3]=30000
+###   col[4]=63636363636363636363
+###   col[5]=63636363636363636363
+###   col[6]='2025-07-29 17:57:44'
+###   col[7]='2025-07-29 17:57:44'
+###   col[8]=3333.3
+```
+
 如果有多个 binlog 需要反转，解析的文件结果，需要反向导入到 mysql
+
+### 过滤示例
+
+```
+./gomysqlbinlog  --databases test --tables 'tabletest1' --rows-filter="col[1]=='bbbb'" -v 2 -f binlog.000013
+```
+
+原始 binlog内容：
+```
+BINLOG '
+apuIaBO3U9sERwAAAEMGAAAAAIMKAAAAAAEABHRlc3QACnhpYW9ndGVzdDIACQMPDwj8/BIRBAl4
+AHgAAgIAAAT8AKlelk8=
+apuIaB63U9sEGAEAAFsHAAAAAIMKAAAAAAEAAgAJ//8A/gIAAAAEYWFhYQQxMTExECcAAAAAAAAK
+AGFhYWFhYWFhYWEKAGFhYWFhYWFhYWGZtzsexmiIm2oz44pEAP4DAAAABGJiYmIEMjIyMiBOAAAA
+AAAACgBiYmJiYmJiYmJiCgBiYmJiYmJiYmJimbc7HsZoiJtqM+MKRQD+BAAAAARjY2NjBDMzMzMw
+dQAAAAAAAAoAY2NjY2NjY2NjYwoAY2NjY2NjY2NjY5m3Ox7GaIibas1UUEUA/gUAAAAEZGRkZAQ0
+NDQ0QJwAAAAAAAAKAGRkZGRkZGRkZGQKAGRkZGRkZGRkZGSZtzsexmiIm2oz44pFIwMLyA==
+'/*!*/;
+### INSERT INTO `test`.`tabletest2`
+### SET
+###   @1=2 /* INT meta=0 nullable=0 is_null=0 */
+###   @2='aaaa' /* VARSTRING(120) meta=120 nullable=0 is_null=0 */
+###   @3='1111' /* VARSTRING(120) meta=120 nullable=1 is_null=0 */
+###   @4=10000 /* LONGINT meta=0 nullable=1 is_null=0 */
+###   @5='aaaaaaaaaa' /* BLOB/TEXT meta=2 nullable=1 is_null=0 */
+###   @6='aaaaaaaaaa' /* BLOB/TEXT meta=2 nullable=1 is_null=0 */
+###   @7='2025-07-29 17:59:06' /* DATETIME(0) meta=0 nullable=1 is_null=0 */
+###   @8=1753783146 /* TIMESTAMP(0) meta=0 nullable=1 is_null=0 */
+###   @9=1111.1               /* FLOAT meta=4 nullable=0 is_null=0 */
+### INSERT INTO `test`.`tabletest2`
+### SET
+###   @1=3 /* INT meta=0 nullable=0 is_null=0 */
+###   @2='bbbb' /* VARSTRING(120) meta=120 nullable=0 is_null=0 */
+###   @3='2222' /* VARSTRING(120) meta=120 nullable=1 is_null=0 */
+###   @4=20000 /* LONGINT meta=0 nullable=1 is_null=0 */
+###   @5='bbbbbbbbbb' /* BLOB/TEXT meta=2 nullable=1 is_null=0 */
+###   @6='bbbbbbbbbb' /* BLOB/TEXT meta=2 nullable=1 is_null=0 */
+###   @7='2025-07-29 17:59:06' /* DATETIME(0) meta=0 nullable=1 is_null=0 */
+###   @8=1753783146 /* TIMESTAMP(0) meta=0 nullable=1 is_null=0 */
+###   @9=2222.2               /* FLOAT meta=4 nullable=0 is_null=0 */
+### INSERT INTO `test`.`tabletest2`
+### SET
+###   @1=4 /* INT meta=0 nullable=0 is_null=0 */
+###   @2='cccc' /* VARSTRING(120) meta=120 nullable=0 is_null=0 */
+###   @3='3333' /* VARSTRING(120) meta=120 nullable=1 is_null=0 */
+###   @4=30000 /* LONGINT meta=0 nullable=1 is_null=0 */
+###   @5='cccccccccc' /* BLOB/TEXT meta=2 nullable=1 is_null=0 */
+###   @6='cccccccccc' /* BLOB/TEXT meta=2 nullable=1 is_null=0 */
+###   @7='2025-07-29 17:59:06' /* DATETIME(0) meta=0 nullable=1 is_null=0 */
+###   @8=1753783146 /* TIMESTAMP(0) meta=0 nullable=1 is_null=0 */
+###   @9=3333.3               /* FLOAT meta=4 nullable=0 is_null=0 */
+### INSERT INTO `test`.`tabletest2`
+### SET
+###   @1=5 /* INT meta=0 nullable=0 is_null=0 */
+###   @2='dddd' /* VARSTRING(120) meta=120 nullable=0 is_null=0 */
+###   @3='4444' /* VARSTRING(120) meta=120 nullable=1 is_null=0 */
+###   @4=40000 /* LONGINT meta=0 nullable=1 is_null=0 */
+###   @5='dddddddddd' /* BLOB/TEXT meta=2 nullable=1 is_null=0 */
+###   @6='dddddddddd' /* BLOB/TEXT meta=2 nullable=1 is_null=0 */
+###   @7='2025-07-29 17:59:06' /* DATETIME(0) meta=0 nullable=1 is_null=0 */
+###   @8=1753783146 /* TIMESTAMP(0) meta=0 nullable=1 is_null=0 */
+###   @9=4444.4               /* FLOAT meta=4 nullable=0 is_null=0 */
+```
+
+过滤后 binlog:
+```
+# Timestamp=2025-07-29 17:57:44 ServerId=81482679 EventType=WriteRowsEventV2 EndLogPos=1012 Db=test Table=tabletest1 TableID=2690 Rows=1/4
+BEGIN/*!*/;
+
+BINLOG '
+GJuIaBO3U9sERwAAANwCAAAAAIIKAAAAAAEABHRlc3QACnhpYW9ndGVzdDEACQMPDwj8/BIRBAke
+AB4AAgIAAAT8AI/xEQQ=
+GJuIaB63U9sEYQAAAPQDAAAAAIIKAAAAAAEAAgAJ//8A/gMAAAAEYmJiYgQyMjIyIE4AAAAAAAAK
+AGJiYmJiYmJiYmIKAGJiYmJiYmJiYmKZtzsebGiImxgz4wpFudHSMQ==
+'/*!*/;
+### INSERT INTO `test`.`tabletest1`
+### SET
+###   col[0]=3 /* INT false */
+###   col[1]='bbbb' /* VARSTRING(30) false */
+###   col[2]='2222' /* VARSTRING(30) false */
+###   col[3]=20000 /* LONGINT false */
+###   col[4]=62626262626262626262 /* BLOB/TEXT false */
+###   col[5]=62626262626262626262 /* BLOB/TEXT false */
+###   col[6]='2025-07-29 17:57:44' /* DATETIME(0) false */
+###   col[7]='2025-07-29 17:57:44' /* TIMESTAMP(0) false */
+###   col[8]=2222.2 /* FLOAT false */
+COMMIT/*!*/;
+```
 
 ## TODO
 - [ ] add unit test
-- [ ] print rows matched
+- [ ] print rows num matched
 - [ ] rows changed stats

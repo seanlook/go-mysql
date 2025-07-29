@@ -164,7 +164,7 @@ func (p *BinlogParser) ParseFileAndPrint(fileName string, resultFileName string)
 			if p.Flashback {
 				ioWriter.SetHeader(buf.Bytes())
 			} else {
-				ioWriter.Write(buf.Bytes())
+				_, _ = ioWriter.Write(buf.Bytes())
 			}
 		case FAKE_DONE_EVENT:
 			if p.footerBuf == nil { // no rotate event found
@@ -197,7 +197,7 @@ func (p *BinlogParser) ParseFileAndPrint(fileName string, resultFileName string)
 			if p.Flashback {
 				ioWriter.SetFooter(p.footerBuf.Bytes())
 			} else {
-				ioWriter.Write(p.footerBuf.Bytes())
+				_, _ = ioWriter.Write(p.footerBuf.Bytes())
 			}
 		case ROTATE_EVENT: // STOP_EVENT
 			r := e.Event.(*RotateEvent)
@@ -236,7 +236,7 @@ func (p *BinlogParser) ParseFileAndPrint(fileName string, resultFileName string)
 			buf.WriteString(fmt.Sprintf("# Timestamp=%s ServerId=%d EventType=%s EndLogPos=%d Db=%s Table=%s TableID=%d",
 				unixTimeToStr(e.Header.Timestamp), e.Header.ServerID, e.Header.EventType.String(),
 				e.Header.LogPos, r.Schema, r.Table, r.TableID) + "\n")
-			ioWriter.Write(buf.Bytes())
+			_, _ = ioWriter.Write(buf.Bytes())
 			//}
 		case WRITE_ROWS_EVENTv1, WRITE_ROWS_EVENTv2, TENDB_WRITE_ROWS_COMPRESSED_EVENT_V1, TENDB_WRITE_ROWS_COMPRESSED_EVENT_V2:
 			r := e.Event.(*RowsEvent)
@@ -268,7 +268,7 @@ func (p *BinlogParser) ParseFileAndPrint(fileName string, resultFileName string)
 				}
 				buf.WriteString(fmt.Sprintf("%s%s\n", p.commit, p.delimiter))
 			}
-			ioWriter.Write(buf.Bytes())
+			_, _ = ioWriter.Write(buf.Bytes())
 		case DELETE_ROWS_EVENTv1, DELETE_ROWS_EVENTv2, TENDB_DELETE_ROWS_COMPRESSED_EVENT_V1, TENDB_DELETE_ROWS_COMPRESSED_EVENT_V2:
 			buf := bytes.NewBuffer(nil)
 			r := e.Event.(*RowsEvent)
@@ -299,7 +299,7 @@ func (p *BinlogParser) ParseFileAndPrint(fileName string, resultFileName string)
 				}
 				buf.WriteString(fmt.Sprintf("%s%s\n", p.commit, p.delimiter))
 			}
-			ioWriter.Write(buf.Bytes())
+			_, _ = ioWriter.Write(buf.Bytes())
 		case UPDATE_ROWS_EVENTv1, UPDATE_ROWS_EVENTv2, TENDB_UPDATE_ROWS_COMPRESSED_EVENT_V1, TENDB_UPDATE_ROWS_COMPRESSED_EVENT_V2:
 			buf := bytes.NewBuffer(nil)
 			r := e.Event.(*RowsEvent)
@@ -330,7 +330,7 @@ func (p *BinlogParser) ParseFileAndPrint(fileName string, resultFileName string)
 				}
 				buf.WriteString(fmt.Sprintf("%s%s\n", p.commit, p.delimiter))
 			}
-			ioWriter.Write(buf.Bytes())
+			_, _ = ioWriter.Write(buf.Bytes())
 
 		case QUERY_EVENT:
 			qe := e.Event.(*QueryEvent)
@@ -365,7 +365,7 @@ func (p *BinlogParser) ParseFileAndPrint(fileName string, resultFileName string)
 				}
 				// 不打印 statement
 			}
-			ioWriter.Write(buf.Bytes())
+			_, _ = ioWriter.Write(buf.Bytes())
 			/*
 				case XID_EVENT:
 					buf := bytes.NewBuffer(nil)
@@ -379,7 +379,7 @@ func (p *BinlogParser) ParseFileAndPrint(fileName string, resultFileName string)
 				buf.WriteString(fmt.Sprintf("# at %d\n", e.Header.LogPos-e.Header.EventSize))
 				buf.WriteString(fmt.Sprintf("# Timestamp=%s ServerId=%d EventType=%s EndLogPos=%d",
 					unixTimeToStr(e.Header.Timestamp), e.Header.ServerID, e.Header.EventType.String(), e.Header.LogPos) + "\n")
-				ioWriter.Write(buf.Bytes())
+				_, _ = ioWriter.Write(buf.Bytes())
 			}
 		}
 		return nil
