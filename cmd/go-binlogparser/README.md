@@ -14,6 +14,12 @@ golang版本的可以实现 mysqlbinlog 同样的解析输出效果，但具备�
 - binlog 反转时，即使单个 binlog 非常大，不会造成内存使用过多
 - binlog 过滤/反转时，如果遇到对应的表有 ddl 操作，会提示异常
 
+## build
+```
+cd go-mysql/cmd/go-binlogparser
+go build  -o gomysqlbinlog
+```
+
 ## gomysqlbinlog 
 
 ```
@@ -101,3 +107,8 @@ rows-filter 过滤有两种方式：
 ```
 
 如果有多个 binlog 需要反转，解析的文件结果，需要反向导入到 mysql
+
+## TODO
+- [ ] add unit test
+- [ ] print rows matched
+- [ ] rows changed stats
