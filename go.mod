@@ -1,13 +1,12 @@
 module github.com/go-mysql-org/go-mysql
 
-go 1.23.0
+go 1.22
 
-toolchain go1.24.2
+toolchain go1.23.1
 
 require (
 	filippo.io/edwards25519 v1.1.0
 	github.com/BurntSushi/toml v1.3.2
-	github.com/Masterminds/semver v1.5.0
 	github.com/ShoshinNikita/go-disk-buffer v0.3.0
 	github.com/dlclark/regexp2 v1.11.4
 	github.com/expr-lang/expr v1.16.9
@@ -21,8 +20,6 @@ require (
 	github.com/pingcap/tidb/pkg/parser v0.0.0-20241118164214-4f047be191be
 	github.com/pkg/errors v0.9.1
 	github.com/samber/lo v1.51.0
-	github.com/pingcap/errors v0.11.5-0.20250318082626-8f80e5cb09ec
-	github.com/pingcap/tidb/pkg/parser v0.0.0-20250421232622-526b2c79173d
 	github.com/shopspring/decimal v1.2.0
 	github.com/spf13/cast v1.6.0
 	github.com/spf13/cobra v1.8.1
@@ -45,11 +42,6 @@ require (
 
 require (
 	github.com/minio/sio v0.2.0 // indirect
-	github.com/davecgh/go-spew v1.1.1 // indirect
-	github.com/kr/pretty v0.3.1 // indirect
-	github.com/pingcap/failpoint v0.0.0-20240528011301-b51a646c7c86 // indirect
-	github.com/pingcap/log v1.1.1-0.20241212030209-7e3ff8601a2a // indirect
-	github.com/pmezard/go-difflib v1.0.0 // indirect
 	github.com/rogpeppe/go-internal v1.10.0 // indirect
 	github.com/sagikazarmark/locafero v0.4.0 // indirect
 	github.com/sagikazarmark/slog-shim v0.1.0 // indirect
@@ -66,7 +58,6 @@ require (
 	golang.org/x/sys v0.18.0 // indirect
 	golang.org/x/text v0.22.0 // indirect
 	gopkg.in/ini.v1 v1.67.0 // indirect
-	golang.org/x/text v0.24.0 // indirect
 	gopkg.in/natefinch/lumberjack.v2 v2.2.1 // indirect
 	gopkg.in/yaml.v3 v3.0.1 // indirect
 )

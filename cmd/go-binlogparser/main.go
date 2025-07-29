@@ -83,7 +83,7 @@ func parseBinlogFile() error {
 		timeFilter.StopTime = uint32(stopDatetime.Local().Unix())
 	}
 	p.TimeFilter = &replication.TimeFilter{}
-	copier.Copy(p.TimeFilter, timeFilter) // 这里因为 startPos, stopPos是针对不同的 file 生效
+	_ = copier.Copy(p.TimeFilter, timeFilter) // 这里因为 startPos, stopPos是针对不同的 file 生效
 
 	var tableFilter *db_table_filter.DbTableFilter
 	var err error

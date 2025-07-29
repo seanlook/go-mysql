@@ -159,12 +159,14 @@ func (p *BinlogParser) parseSingleEvent(r io.Reader, onEvent OnEventFunc) (bool,
 		return false, errors.Errorf("invalid raw data size in event %s, need %d but got %d", h.EventType, h.EventSize, buf.Len())
 	}
 
-	if (h.Timestamp < p.TimeFilter.StartTime) && h.EventType != FORMAT_DESCRIPTION_EVENT { // continue
-		return false, nil
-	} else if p.TimeFilter.StopTime > 0 && h.Timestamp > p.TimeFilter.StopTime {
-		return true, nil
-	} else if p.TimeFilter.StopPos > 0 && h.LogPos > p.TimeFilter.StopPos {
-		return true, nil
+	if p.TimeFilter != nil {
+		if (h.Timestamp < p.TimeFilter.StartTime) && h.EventType != FORMAT_DESCRIPTION_EVENT { // continue
+			return false, nil
+		} else if p.TimeFilter.StopTime > 0 && h.Timestamp > p.TimeFilter.StopTime {
+			return true, nil
+		} else if p.TimeFilter.StopPos > 0 && h.LogPos > p.TimeFilter.StopPos {
+			return true, nil
+		}
 	}
 
 	var rawData []byte

@@ -9,6 +9,6 @@ import (
 
 func test() {
 	b := diskBuf.NewBufferWithMaxMemorySize(10 * 1024 * 1024)
-	b.ChangeTempDir("/data/dbbak/")
-	b.Write([]byte("test"))
+	_ = b.ChangeTempDir("/data/dbbak/")
+	_, _ = b.Write([]byte("test"))
 }
