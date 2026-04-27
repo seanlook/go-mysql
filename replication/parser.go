@@ -171,6 +171,8 @@ func (p *BinlogParser) parseSingleEvent(r io.Reader, onEvent OnEventFunc) (bool,
 
 	var rawData []byte
 	rawData = append(rawData, buf.Bytes()...)
+	// change ts to now
+	
 	bodyLen := int(h.EventSize) - EventHeaderSize
 	body := rawData[EventHeaderSize:]
 	if len(body) != bodyLen {

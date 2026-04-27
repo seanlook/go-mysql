@@ -347,6 +347,7 @@ func (p *BinlogParser) ParseFileAndPrint(fileName string, resultFileName string)
 					if string(qe.Schema) != "" {
 						buf.WriteString(fmt.Sprintf("USE `%s`%s\n", qe.Schema, p.delimiter))
 					}
+					// TODO
 					buf.WriteString(fmt.Sprintf("SET TIMESTAMP=%d%s\n", e.Header.Timestamp, p.delimiter))
 					if qe.PrintType == PrintTypeIgnore {
 						query := "# " + strings.ReplaceAll(string(qe.Query), "\n", "# \n")
@@ -402,6 +403,8 @@ type RowsFilter struct {
 	columnFilterExpr string
 	// CompiledColumnFilterExpr compiled go-expr
 	CompiledColumnFilterExpr *vm.Program
+	// AllNumberToString convert all number to string for comparing
+	AllNumberToString bool
 	// rowsMatch rows filter matched records number in this rows event
 	rowsMatch int
 }

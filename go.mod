@@ -9,7 +9,7 @@ require (
 	github.com/BurntSushi/toml v1.3.2
 	github.com/ShoshinNikita/go-disk-buffer v0.3.0
 	github.com/dlclark/regexp2 v1.11.4
-	github.com/expr-lang/expr v1.16.9
+	github.com/expr-lang/expr v1.17.6
 	github.com/go-sql-driver/mysql v1.7.1
 	github.com/goccy/go-json v0.10.2
 	github.com/google/uuid v1.4.0

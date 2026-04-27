@@ -8,7 +8,40 @@ import (
 	"github.com/expr-lang/expr"
 	. "github.com/go-mysql-org/go-mysql/mysql"
 	"github.com/pingcap/errors"
+	"github.com/spf13/cast"
 )
+
+// convertColumnValueToWhereCond 生成 expr 的比较内容
+// string/bytes 列用于做比较的列，最大 1024 长度
+func convertColumnValueToWhereCond(cols []interface{}, convAllNumberToStr bool) []interface{} {
+	for i, _ := range cols {
+		if cols[i] == nil {
+			continue
+		}
+		switch cols[i].(type) {
+		case []byte:
+			buf := cols[i].([]byte)
+			if len(buf) >= 1024 {
+				cols[i] = buf[:1024]
+			} else {
+				cols[i] = buf
+			}
+		case string:
+			str := cols[i].(string)
+			if len(str) >= 1024 {
+				cols[i] = str[:1024]
+			} else {
+				cols[i] = str
+			}
+		//case uint64, float32, float64:
+		default:
+			if convAllNumberToStr {
+				cols[i] = cast.ToString(cols[i])
+			}
+		}
+	}
+	return cols
+}
 
 // FlashbackData2 DecodeData
 // pos is row event body header length
@@ -116,7 +149,7 @@ func (e *RowsEvent) FlashbackData2(pos int, data []byte) (err2 error) {
 		currentMatched := false
 		if e.rowsFilter != nil { // go-expr
 			rowCount := len(e.Rows)
-			columnFields["col"] = e.Rows[rowCount-1]
+			columnFields["col"] = convertColumnValueToWhereCond(e.Rows[rowCount-1], e.rowsFilter.AllNumberToString)
 			rowMatched, _ := expr.Run(e.rowsFilter.CompiledColumnFilterExpr, columnFields)
 			if res, ok := rowMatched.(bool); ok && res {
 				currentMatched = true

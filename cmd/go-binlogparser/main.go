@@ -2,11 +2,9 @@ package main
 
 import (
 	"bytes"
-	"encoding/csv"
 	"fmt"
 	"os"
 	"path/filepath"
-	"slices"
 	"strings"
 	"time"
 
@@ -16,7 +14,6 @@ import (
 	"github.com/jinzhu/copier"
 	_ "github.com/pingcap/tidb/pkg/parser/test_driver"
 	"github.com/pkg/errors"
-	"github.com/spf13/cast"
 	"github.com/spf13/viper"
 )
 
@@ -111,13 +108,14 @@ func parseBinlogFile() error {
 		}
 	}
 
+	rfBuilder := rowsFilterBuilder{}
 	if rowsFilterFromFile := viper.GetString("rows-filter-from-csv"); rowsFilterFromFile != "" {
 		csvContent, err := os.ReadFile(rowsFilterFromFile)
 		if err != nil {
 			return errors.WithMessagef(err, "read file --rows-filter-from-csv=%s", rowsFilterFromFile)
 		}
 		buf := bytes.NewBuffer(csvContent)
-		rowsFilterExpr, err := buildRowsFilterExprFromCsv(buf)
+		rowsFilterExpr, err := rfBuilder.buildRowsFilterExprFromCsv(buf)
 		if err != nil {
 			return err
 		}
@@ -126,12 +124,13 @@ func parseBinlogFile() error {
 		if err != nil {
 			return err
 		}
+		rowsFilter.AllNumberToString = rfBuilder.allNumberToString
 		p.RowsFilter = rowsFilter
 	}
 	if rowsFilterExpr := viper.GetString("rows-filter"); rowsFilterExpr != "" {
 		if guessRowsFilterType(rowsFilterExpr) < 1 { // csv format, will change to go-expr format
 			buf := bytes.NewBufferString(rowsFilterExpr)
-			rowsFilterExpr, err = buildRowsFilterExprFromCsv(buf)
+			rowsFilterExpr, err = rfBuilder.buildRowsFilterExprFromCsv(buf)
 			if err != nil {
 				return err
 			}
@@ -141,6 +140,7 @@ func parseBinlogFile() error {
 		if err != nil {
 			return err
 		}
+		rowsFilter.AllNumberToString = rfBuilder.allNumberToString
 		p.RowsFilter = rowsFilter
 	}
 
@@ -225,137 +225,4 @@ func guessRowsFilterType(rowsFilterExpr string) int {
 		}
 	}
 	return -1
-}
-
-type ColumnDef struct {
-	ColumnName string
-	// Position in information_schema.columns, start from 1
-	Position int
-	// DataType original data type from schema definition
-	DataType string
-	// TypeAlias int, str, hex
-	TypeAlias string
-}
-type TableColumnInfo map[string]*ColumnDef
-
-func parseHeaderToColumnDef(columnName string) (*ColumnDef, error) {
-	parts := strings.Split(columnName, ":")
-	if len(parts) == 1 {
-		return &ColumnDef{
-			ColumnName: columnName,
-		}, nil
-	} else if len(parts) == 2 {
-		return &ColumnDef{
-			ColumnName: parts[0],
-			TypeAlias:  parts[1],
-		}, nil
-	} else if len(parts) == 3 {
-		if pos, err := cast.ToIntE(parts[3]); err == nil {
-			return &ColumnDef{
-				ColumnName: parts[0],
-				TypeAlias:  parts[1],
-				Position:   pos,
-			}, nil
-		} else {
-			return nil, errors.WithMessagef(err, "parse column position failed from %s", columnName)
-		}
-	} else {
-		return nil, errors.Errorf("wrong column name format %s", columnName)
-	}
-}
-
-func wrapValueWithDatatype(value string, typeAlias string) string {
-	numeric := []string{"tinyint", "smallint", "mediumint", "int", "integer", "bigint", "decimal", "dec", "float",
-		"double", "bool", "boolean", "bit"}
-	_ = map[string][]string{
-		"int": numeric,
-	}
-
-	if slices.Contains(numeric, strings.ToLower(typeAlias)) {
-		typeAlias = "int"
-	} else {
-		typeAlias = "str"
-	}
-	if typeAlias == "" {
-		if _, err := cast.ToUint64E(value); err == nil {
-			typeAlias = "int"
-		} else if strings.HasPrefix(value, "0x") { // hex
-			typeAlias = "hex"
-		} else {
-			typeAlias = "str"
-		}
-	}
-	if typeAlias == "str" {
-		if value == "" || value == "''" || value == "\"\"" {
-			return "''"
-		} else {
-			if value[0] == '\'' && value[len(value)-1] == '\'' {
-				return value
-			}
-			if value[0] == '"' && value[len(value)-1] == '"' {
-				return value
-			}
-			value = fmt.Sprintf("'%s'", value)
-			return value
-		}
-	} else {
-		return strings.Trim(strings.Trim(value, "'"), "\"")
-	}
-}
-
-func buildRowsFilterExprFromCsv(csvInput *bytes.Buffer) (exprOutput string, err error) {
-	csvReader := csv.NewReader(csvInput)
-	records, err := csvReader.ReadAll()
-	if err != nil {
-		return "", errors.WithMessagef(err, "Unable to parse file as CSV for")
-	}
-	if len(records) <= 1 {
-		return "", errors.Errorf("error csv format")
-	}
-
-	rowsFilterExpr := ""
-	var rowsFilterExprs []string
-	/*
-		var records [][]string
-		lines := strings.Split(csvInput, "\n")
-		for _, line := range lines {
-			cols := strings.Split(line, ",")
-			records = append(records, cols)
-		}
-	*/
-
-	if len(records) <= 1 {
-		return "", errors.Errorf("error csv format")
-	}
-	exprHeader := records[0]
-	if len(exprHeader) == 1 {
-		colDef, err := parseHeaderToColumnDef(exprHeader[0])
-		if err != nil {
-			return "", err
-		}
-		rowsFilterExpr = fmt.Sprintf("%s in ", colDef.ColumnName)
-		rowsFilterExpr += "["
-		var valueList []string
-		for _, line := range records[1:] {
-			valueList = append(valueList, wrapValueWithDatatype(line[0], colDef.TypeAlias))
-		}
-		rowsFilterExpr += strings.Join(valueList, ",")
-		rowsFilterExpr += "]"
-	} else {
-		for _, line := range records[1:] {
-			var lineExpr []string
-			for i, col := range line {
-				//rowsFilterExpr = fmt.Sprintf("%s == %s", exprHeader[i], col)
-				colDef, err := parseHeaderToColumnDef(exprHeader[i])
-				if err != nil {
-					return "", err
-				}
-				lineExpr = append(lineExpr, fmt.Sprintf("%s == %s",
-					colDef.ColumnName, wrapValueWithDatatype(col, colDef.TypeAlias)))
-			}
-			rowsFilterExprs = append(rowsFilterExprs, "("+strings.Join(lineExpr, " and ")+")")
-		}
-		rowsFilterExpr = strings.Join(rowsFilterExprs, " or ")
-	}
-	return rowsFilterExpr, nil
 }

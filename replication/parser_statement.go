@@ -40,6 +40,8 @@ func ParseStmt(stmt ast.StmtNode) (allowed bool, ns []*SchemaNode) {
 			for _, spec := range t.Specs {
 				allSpecs = append(allSpecs, spec.Tp)
 				if spec.Tp == ast.AlterTableAddColumns {
+					// 如果是增加在最后一列，是可以闪回的
+					allowed = true
 					//fmt.Println("AlterTableAddColumns", spec.Name, spec.Text())
 				} else if spec.Tp == ast.AlterTableDropIndex {
 					//fmt.Println("AlterTableDropIndex", spec.IndexName, spec.Text())
@@ -54,6 +56,7 @@ func ParseStmt(stmt ast.StmtNode) (allowed bool, ns []*SchemaNode) {
 			allowed = true
 		}
 	case *ast.DropTableStmt:
+		allowed = false // set false explicitly
 		ns = make([]*SchemaNode, len(t.Tables))
 		for i, table := range t.Tables {
 			ns[i] = &SchemaNode{
@@ -69,6 +72,7 @@ func ParseStmt(stmt ast.StmtNode) (allowed bool, ns []*SchemaNode) {
 		}
 		ns = []*SchemaNode{n}
 	case *ast.TruncateTableStmt:
+		allowed = false
 		n := &SchemaNode{
 			Schema: t.Table.Schema.String(),
 			Table:  t.Table.Name.String(),
