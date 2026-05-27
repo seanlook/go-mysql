@@ -161,7 +161,11 @@ func (p *BinlogParser) parseSingleEvent(r io.Reader, onEvent OnEventFunc) (bool,
 	}
 
 	if p.TimeFilter != nil {
-		if (h.Timestamp < p.TimeFilter.StartTime) && h.EventType != FORMAT_DESCRIPTION_EVENT { // continue
+		// 闪回模式下，TableMapEvent 跳过时间过滤（使用后续 RowsEvent 的时间戳来判断），
+		// 但仍需继续解析和注册到 p.tables，否则后续 RowsEvent 会找不到对应的 table
+		if p.Flashback && h.EventType == TABLE_MAP_EVENT {
+			// 不做时间过滤，继续往下执行解析和注册
+		} else if (h.Timestamp < p.TimeFilter.StartTime) && h.EventType != FORMAT_DESCRIPTION_EVENT {
 			return false, nil
 		} else if p.TimeFilter.StopTime > 0 && h.Timestamp > p.TimeFilter.StopTime {
 			return true, nil
@@ -176,7 +180,7 @@ func (p *BinlogParser) parseSingleEvent(r io.Reader, onEvent OnEventFunc) (bool,
 	if p.Flashback && p.flashbackTimestamp == 0 {
 		p.flashbackTimestamp = uint32(time.Now().Unix())
 	}
-	
+
 	bodyLen := int(h.EventSize) - EventHeaderSize
 	body := rawData[EventHeaderSize:]
 	if len(body) != bodyLen {
@@ -218,22 +222,10 @@ func (p *BinlogParser) parseSingleEvent(r io.Reader, onEvent OnEventFunc) (bool,
 		return false, errors.Trace(err)
 	}
 
-	// 闪回模式下，同步更新 Header 对象中的 Timestamp，确保与 rawData 一致
-	// 同时更新 rawFlashbacked 中的时间戳（对于未在 ParseEvent2 中处理的事件）
-	if p.Flashback && p.flashbackTimestamp > 0 {
+	// 闪回模式下，同步更新 RowsEvent 的 Header Timestamp
+	// 只修改 RowsEvent 的时间戳，TableMapEvent 保持原始时间戳不变（TimeFilter 使用 RowsEvent 时间戳过滤）
+	if p.Flashback && p.flashbackTimestamp > 0 && isRowsEvent(h.EventType) {
 		h.Timestamp = p.flashbackTimestamp
-		if len(rawFlashbacked) >= 4 {
-			currentTs := binary.LittleEndian.Uint32(rawFlashbacked[TimestampPos : TimestampPos+4])
-			if currentTs != p.flashbackTimestamp {
-				// 时间戳尚未被更新（如没有 renameRule 的 TableMapEvent 等），需要修改并重新计算 checksum
-				binary.LittleEndian.PutUint32(rawFlashbacked[TimestampPos:TimestampPos+4], p.flashbackTimestamp)
-				if p.format != nil && p.format.ChecksumAlgorithm == BINLOG_CHECKSUM_ALG_CRC32 && len(rawFlashbacked) > EventHeaderSize+BinlogChecksumLength {
-					// 重新计算 CRC32 checksum（最后 4 字节）
-					checksum := crc32.ChecksumIEEE(rawFlashbacked[:len(rawFlashbacked)-BinlogChecksumLength])
-					binary.LittleEndian.PutUint32(rawFlashbacked[len(rawFlashbacked)-BinlogChecksumLength:], checksum)
-				}
-			}
-		}
 	}
 
 	if err = onEvent(&BinlogEvent{RawData: rawFlashbacked, Header: h, Event: e}); err != nil {
@@ -560,4 +552,19 @@ func (p *BinlogParser) newTransactionPayloadEvent() *TransactionPayloadEvent {
 	e.format = *p.format
 
 	return e
+}
+
+// isRowsEvent 判断事件类型是否为 RowsEvent（INSERT/UPDATE/DELETE）
+func isRowsEvent(et EventType) bool {
+	switch et {
+	case WRITE_ROWS_EVENTv0, UPDATE_ROWS_EVENTv0, DELETE_ROWS_EVENTv0,
+		WRITE_ROWS_EVENTv1, UPDATE_ROWS_EVENTv1, DELETE_ROWS_EVENTv1,
+		WRITE_ROWS_EVENTv2, UPDATE_ROWS_EVENTv2, DELETE_ROWS_EVENTv2,
+		MARIADB_WRITE_ROWS_COMPRESSED_EVENT_V1, MARIADB_UPDATE_ROWS_COMPRESSED_EVENT_V1, MARIADB_DELETE_ROWS_COMPRESSED_EVENT_V1,
+		TENDB_WRITE_ROWS_COMPRESSED_EVENT_V1, TENDB_UPDATE_ROWS_COMPRESSED_EVENT_V1, TENDB_DELETE_ROWS_COMPRESSED_EVENT_V1,
+		TENDB_WRITE_ROWS_COMPRESSED_EVENT_V2, TENDB_UPDATE_ROWS_COMPRESSED_EVENT_V2, TENDB_DELETE_ROWS_COMPRESSED_EVENT_V2,
+		PARTIAL_UPDATE_ROWS_EVENT:
+		return true
+	}
+	return false
 }

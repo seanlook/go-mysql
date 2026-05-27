@@ -188,6 +188,13 @@ func TestFlashbackTimestampUpdate(t *testing.T) {
 		if ev.Header.EventType == FAKE_DONE_EVENT {
 			continue // 跳过结束标记事件
 		}
+		if ev.Header.EventType == TABLE_MAP_EVENT {
+			continue // TableMapEvent 保持原始时间戳不变，TimeFilter 使用 RowsEvent 时间戳过滤
+		}
+
+		// 只有 RowsEvent 的时间戳需要被更新
+		require.True(t, isRowsEvent(ev.Header.EventType),
+			"只有 RowsEvent 的时间戳会被更新, got event type %s", ev.Header.EventType)
 
 		// 验证 Header.Timestamp 被更新为当前时间（允许几秒误差）
 		require.True(t, ev.Header.Timestamp >= beforeTime && ev.Header.Timestamp <= afterTime,
