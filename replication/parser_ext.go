@@ -23,8 +23,9 @@ import (
 )
 
 type PrintEventInfo struct {
-	footerBuf         *bytes.Buffer
-	tableMapRawBase64 map[uint64][]byte
+	footerBuf          *bytes.Buffer
+	tableMapRawBase64  map[uint64][]byte
+	tableMapHeaderInfo map[uint64][]byte // 闪回模式下缓存 TableMapEvent 的 # 描述信息，在 RowsEvent 输出时一起输出
 
 	begin                   string
 	commit                  string
@@ -101,6 +102,7 @@ func (i *PrintEventInfo) Init() {
 	i.begin = "BEGIN"
 	i.commit = "COMMIT"
 	i.tableMapRawBase64 = make(map[uint64][]byte)
+	i.tableMapHeaderInfo = make(map[uint64][]byte)
 }
 
 // ParseFileAndPrint 解析1个 binlog文件，并打印输出到 1 个目标 io (file/stdout)
@@ -236,12 +238,16 @@ func (p *BinlogParser) ParseFileAndPrint(fileName string, resultFileName string)
 			buf.WriteString(fmt.Sprintf("# Timestamp=%s ServerId=%d EventType=%s EndLogPos=%d Db=%s Table=%s TableID=%d",
 				unixTimeToStr(e.Header.Timestamp), e.Header.ServerID, e.Header.EventType.String(),
 				e.Header.LogPos, r.Schema, r.Table, r.TableID) + "\n")
-			_, _ = ioWriter.Write(buf.Bytes())
+			if p.Flashback {
+				// 闪回模式下缓存描述信息，在对应 RowsEvent 输出时一起写入，避免逆序后顺序错乱
+				p.tableMapHeaderInfo[r.TableID] = buf.Bytes()
+			} else {
+				_, _ = ioWriter.Write(buf.Bytes())
+			}
 			//}
 		case WRITE_ROWS_EVENTv1, WRITE_ROWS_EVENTv2, TENDB_WRITE_ROWS_COMPRESSED_EVENT_V1, TENDB_WRITE_ROWS_COMPRESSED_EVENT_V2:
 			r := e.Event.(*RowsEvent)
 			buf := bytes.NewBuffer(nil)
-
 			if len(e.RawData) <= EventHeaderSize {
 				//fmt.Println("xxxxx insert", "not matched")
 				if !p.short {
@@ -251,6 +257,12 @@ func (p *BinlogParser) ParseFileAndPrint(fileName string, resultFileName string)
 						e.Header.LogPos, r.Table.GetSchema(), r.Table.Table, r.TableID) + "\n")
 				}
 			} else {
+				// 闪回模式下，将缓存的 TableMapEvent 描述信息放在 RowsEvent 前面一起输出
+				if p.Flashback {
+					if tmInfo, ok := p.tableMapHeaderInfo[r.TableID]; ok {
+						buf.Write(tmInfo)
+					}
+				}
 				buf.WriteString(fmt.Sprintf("# at %d\n", e.Header.LogPos-e.Header.EventSize))
 				buf.WriteString(fmt.Sprintf("# Timestamp=%s ServerId=%d EventType=%s EndLogPos=%d Db=%s Table=%s TableID=%d Rows=%d/%d",
 					unixTimeToStr(e.Header.Timestamp), e.Header.ServerID, r.GetEventType().String(),
@@ -272,7 +284,6 @@ func (p *BinlogParser) ParseFileAndPrint(fileName string, resultFileName string)
 		case DELETE_ROWS_EVENTv1, DELETE_ROWS_EVENTv2, TENDB_DELETE_ROWS_COMPRESSED_EVENT_V1, TENDB_DELETE_ROWS_COMPRESSED_EVENT_V2:
 			buf := bytes.NewBuffer(nil)
 			r := e.Event.(*RowsEvent)
-
 			if len(e.RawData) <= EventHeaderSize {
 				//fmt.Println("xxxxx delete", "not matched")
 				if !p.short {
@@ -282,6 +293,12 @@ func (p *BinlogParser) ParseFileAndPrint(fileName string, resultFileName string)
 						e.Header.LogPos, r.Table.GetSchema(), r.Table.Table, r.TableID) + "\n")
 				}
 			} else {
+				// 闪回模式下，将缓存的 TableMapEvent 描述信息放在 RowsEvent 前面一起输出
+				if p.Flashback {
+					if tmInfo, ok := p.tableMapHeaderInfo[r.TableID]; ok {
+						buf.Write(tmInfo)
+					}
+				}
 				buf.WriteString(fmt.Sprintf("# at %d\n", e.Header.LogPos-e.Header.EventSize))
 				buf.WriteString(fmt.Sprintf("# Timestamp=%s ServerId=%d EventType=%s EndLogPos=%d Db=%s Table=%s TableID=%d Rows=%d/%d",
 					unixTimeToStr(e.Header.Timestamp), e.Header.ServerID, r.GetEventType().String(),
@@ -303,7 +320,6 @@ func (p *BinlogParser) ParseFileAndPrint(fileName string, resultFileName string)
 		case UPDATE_ROWS_EVENTv1, UPDATE_ROWS_EVENTv2, TENDB_UPDATE_ROWS_COMPRESSED_EVENT_V1, TENDB_UPDATE_ROWS_COMPRESSED_EVENT_V2:
 			buf := bytes.NewBuffer(nil)
 			r := e.Event.(*RowsEvent)
-
 			if len(e.RawData) <= EventHeaderSize {
 				//fmt.Println("xxxxx update", "not matched")
 				if !p.short {
@@ -313,6 +329,12 @@ func (p *BinlogParser) ParseFileAndPrint(fileName string, resultFileName string)
 						e.Header.LogPos, r.Table.GetSchema(), r.Table.Table, r.TableID) + "\n")
 				}
 			} else {
+				// 闪回模式下，将缓存的 TableMapEvent 描述信息放在 RowsEvent 前面一起输出
+				if p.Flashback {
+					if tmInfo, ok := p.tableMapHeaderInfo[r.TableID]; ok {
+						buf.Write(tmInfo)
+					}
+				}
 				buf.WriteString(fmt.Sprintf("# at %d\n", e.Header.LogPos-e.Header.EventSize))
 				buf.WriteString(fmt.Sprintf("# Timestamp=%s ServerId=%d EventType=%s EndLogPos=%d Db=%s Table=%s TableID=%d Rows=%d/%d",
 					unixTimeToStr(e.Header.Timestamp), e.Header.ServerID, r.GetEventType().String(),
