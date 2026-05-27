@@ -74,20 +74,27 @@ func (c *FlashbackWriter) Write(p []byte) (n int, err error) {
 				return 0, err
 			}
 		}
-		c.next()
+		if err = c.next(); err != nil {
+			return 0, err
+		}
 		//return len(p), errors.New("cache full")
 	}
 	return len(p), nil
 }
 
 // NewBytesCache filePrefix may contain db_table name
-func (c *FlashbackWriter) next() {
+func (c *FlashbackWriter) next() error {
 	c.currentIOWriter.Close()
 	c.cache = nil
 	c.currentFilePartId += 1
 	c.currentFileName = fmt.Sprintf("%s.%04d.sql", c.filePrefix, c.currentFilePartId)
 	c.filePartNames = append(c.filePartNames, c.currentFileName)
-	c.currentIOWriter, _ = os.Create(c.currentFileName)
+	var err error
+	c.currentIOWriter, err = os.Create(c.currentFileName)
+	if err != nil {
+		return errors.WithMessagef(err, "failed to create flashback temp file: %s", c.currentFileName)
+	}
+	return nil
 }
 
 func (c *FlashbackWriter) SetHeader(s []byte) {
@@ -131,7 +138,7 @@ func (c *FlashbackWriter) Close() (err error) {
 	return
 }
 
-func NewFlashbackWriter(filePrefix string, cacheSize int, outputWriter io.WriteCloser) *FlashbackWriter {
+func NewFlashbackWriter(filePrefix string, cacheSize int, outputWriter io.WriteCloser) (*FlashbackWriter, error) {
 	bc := &FlashbackWriter{
 		filePrefix:   filePrefix,
 		maxCacheSize: cacheSize,
@@ -139,6 +146,10 @@ func NewFlashbackWriter(filePrefix string, cacheSize int, outputWriter io.WriteC
 	}
 	bc.currentFileName = fmt.Sprintf("%s.%04d.sql", filePrefix, bc.currentFilePartId)
 	bc.filePartNames = append(bc.filePartNames, bc.currentFileName)
-	bc.currentIOWriter, _ = os.Create(bc.currentFileName)
-	return bc
+	var err error
+	bc.currentIOWriter, err = os.Create(bc.currentFileName)
+	if err != nil {
+		return nil, errors.WithMessagef(err, "failed to create flashback temp file: %s, please check if the directory exists and has write permission", bc.currentFileName)
+	}
+	return bc, nil
 }

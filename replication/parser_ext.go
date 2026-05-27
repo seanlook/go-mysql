@@ -121,7 +121,10 @@ func (p *BinlogParser) ParseFileAndPrint(fileName string, resultFileName string)
 		cwd, _ := os.Getwd()
 		cacheSize := viper.GetInt("result-file-max-size-mb") / 2 * 1024 * 1024
 		cacheFilePrefix := filepath.Join(cwd, filepath.Base(fileName))
-		ioWriter = pkg.NewFlashbackWriter(cacheFilePrefix, cacheSize, outputWriter)
+		ioWriter, err = pkg.NewFlashbackWriter(cacheFilePrefix, cacheSize, outputWriter)
+		if err != nil {
+			return err
+		}
 	} else {
 		ioWriter = pkg.NewNormalWriter(outputWriter)
 	}
