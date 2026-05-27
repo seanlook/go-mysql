@@ -29,6 +29,7 @@ const (
 
 const EventTypePos = 4 // EventTypePos from header
 const EventSizPos = 9
+const TimestampPos = 0 // TimestampPos timestamp offset in event header
 
 type BinlogEvent struct {
 	// raw binlog data which contains all data, including binlog header and event body, and including crc32 checksum if exists

@@ -54,6 +54,7 @@ type BinlogParser struct {
 	TimeFilter                *TimeFilter
 	RenameRule                *pkg.RenameRule
 	originalChecksumAlgorithm byte
+	flashbackTimestamp        uint32 // 闪回时使用的时间戳，所有闪回事件共享同一时间
 
 	*PrintEventInfo
 }
@@ -171,7 +172,10 @@ func (p *BinlogParser) parseSingleEvent(r io.Reader, onEvent OnEventFunc) (bool,
 
 	var rawData []byte
 	rawData = append(rawData, buf.Bytes()...)
-	// change ts to now
+	// 闪回模式下，初始化闪回时间戳（所有事件共享同一时间）
+	if p.Flashback && p.flashbackTimestamp == 0 {
+		p.flashbackTimestamp = uint32(time.Now().Unix())
+	}
 	
 	bodyLen := int(h.EventSize) - EventHeaderSize
 	body := rawData[EventHeaderSize:]
@@ -212,6 +216,24 @@ func (p *BinlogParser) parseSingleEvent(r io.Reader, onEvent OnEventFunc) (bool,
 			return false, nil
 		}
 		return false, errors.Trace(err)
+	}
+
+	// 闪回模式下，同步更新 Header 对象中的 Timestamp，确保与 rawData 一致
+	// 同时更新 rawFlashbacked 中的时间戳（对于未在 ParseEvent2 中处理的事件）
+	if p.Flashback && p.flashbackTimestamp > 0 {
+		h.Timestamp = p.flashbackTimestamp
+		if len(rawFlashbacked) >= 4 {
+			currentTs := binary.LittleEndian.Uint32(rawFlashbacked[TimestampPos : TimestampPos+4])
+			if currentTs != p.flashbackTimestamp {
+				// 时间戳尚未被更新（如没有 renameRule 的 TableMapEvent 等），需要修改并重新计算 checksum
+				binary.LittleEndian.PutUint32(rawFlashbacked[TimestampPos:TimestampPos+4], p.flashbackTimestamp)
+				if p.format != nil && p.format.ChecksumAlgorithm == BINLOG_CHECKSUM_ALG_CRC32 && len(rawFlashbacked) > EventHeaderSize+BinlogChecksumLength {
+					// 重新计算 CRC32 checksum（最后 4 字节）
+					checksum := crc32.ChecksumIEEE(rawFlashbacked[:len(rawFlashbacked)-BinlogChecksumLength])
+					binary.LittleEndian.PutUint32(rawFlashbacked[len(rawFlashbacked)-BinlogChecksumLength:], checksum)
+				}
+			}
+		}
 	}
 
 	if err = onEvent(&BinlogEvent{RawData: rawFlashbacked, Header: h, Event: e}); err != nil {

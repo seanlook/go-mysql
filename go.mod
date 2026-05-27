@@ -61,3 +61,5 @@ require (
 	gopkg.in/natefinch/lumberjack.v2 v2.2.1 // indirect
 	gopkg.in/yaml.v3 v3.0.1 // indirect
 )
+
+replace github.com/expr-lang/expr => github.com/seanlook/expr v0.0.0-20260527031956-9de4d16c56a6

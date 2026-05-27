@@ -602,6 +602,10 @@ func (p *BinlogParser) ParseEvent2(h *EventHeader, data []byte, rawData *[]byte)
 			re.rawBytesNew = *rawData
 			err = p.rowsEventDecodeFunc(re, data) // todo handle err?
 			if len(re.rawBytesNew) > EventHeaderSize {
+				// 闪回模式下，将 event header 中的时间戳更新为闪回执行时刻的时间
+				if p.Flashback && p.flashbackTimestamp > 0 {
+					binary.LittleEndian.PutUint32(re.rawBytesNew[TimestampPos:TimestampPos+4], p.flashbackTimestamp)
+				}
 				if p.format != nil && p.format.ChecksumAlgorithm == BINLOG_CHECKSUM_ALG_CRC32 {
 					re.rawBytesNew = append(re.rawBytesNew, p.computeCrc32Checksum(re.rawBytesNew)...)
 				}
@@ -657,6 +661,10 @@ func (p *BinlogParser) ParseEvent2(h *EventHeader, data []byte, rawData *[]byte)
 		if te.renameRule != nil {
 			te.rawBytesNew = *rawData
 			err = te.DecodeAndRename(data)
+			// 闪回模式下，将 event header 中的时间戳更新为闪回执行时刻的时间
+			if p.Flashback && p.flashbackTimestamp > 0 {
+				binary.LittleEndian.PutUint32(te.rawBytesNew[TimestampPos:TimestampPos+4], p.flashbackTimestamp)
+			}
 			if p.format != nil && p.format.ChecksumAlgorithm == BINLOG_CHECKSUM_ALG_CRC32 {
 				te.rawBytesNew = append(te.rawBytesNew, p.computeCrc32Checksum(te.rawBytesNew)...)
 			}
