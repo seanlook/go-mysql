@@ -1277,7 +1277,8 @@ func (e *RowsEvent) decodeImage(data []byte, bitmap []byte, rowImageType EnumRow
 		if !e.printValueMeta {
 			row[i], n, err = e.decodeValueLength(data[pos:], e.Table.ColumnType[i], e.Table.ColumnMeta[i], isPartial)
 		} else {
-			row[i], n, err = e.decodeValue(data[pos:], e.Table.ColumnType[i], e.Table.ColumnMeta[i], isPartial)
+			row[i], n, err = e.decodeValue(data[pos:], e.Table.ColumnType[i], e.Table.ColumnMeta[i],
+				isPartial, unsignedMap[i])
 		}
 
 		row[i], n, err = e.decodeValue(data[pos:], e.Table.ColumnType[i], e.Table.ColumnMeta[i], isPartial, unsignedMap[i])

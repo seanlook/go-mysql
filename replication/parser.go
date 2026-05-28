@@ -56,7 +56,7 @@ type BinlogParser struct {
 	EventTypeFilter           []EventType
 	TimeFilter                *TimeFilter
 	RenameRule                *pkg.RenameRule
-	originalChecksumAlgorithm byte
+	originalChecksumAlgorithm BinlogChecksum
 	flashbackTimestamp        uint32 // 闪回时使用的时间戳，所有闪回事件共享同一时间
 
 	*PrintEventInfo

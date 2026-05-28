@@ -2,3 +2,4 @@ var
 bin
 .idea
 .DS_Store
+build/
