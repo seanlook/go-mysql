@@ -622,7 +622,7 @@ func (p *BinlogParser) parseEventRewrite(h *EventHeader, data []byte, rawData *[
 		re.SetRowsFilter(p.RowsFilter)
 		re.flashback = p.Flashback
 		re.convUpdateToWrite = p.ConvUpdateToWrite
-		if p.RowsFilter != nil || p.verboseLevel > 0 {
+		if p.RowsFilter != nil || (p.PrintEventInfo != nil && p.verboseLevel > 0) {
 			re.printValueMeta = true // 需要 decode row values
 		}
 		if p.rowsEventDecodeFunc != nil {
