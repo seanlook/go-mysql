@@ -39,7 +39,7 @@ type mockHandler struct {
 }
 
 func TestDriverOptions_SetRetriesOn(t *testing.T) {
-	srv := CreateMockServer(t)
+	srv := createMockServer(t)
 	defer srv.Stop()
 	var wg sync.WaitGroup
 	srv.handler.modifier = &wg
@@ -64,7 +64,7 @@ func TestDriverOptions_SetRetriesOn(t *testing.T) {
 }
 
 func TestDriverOptions_SetRetriesOff(t *testing.T) {
-	srv := CreateMockServer(t)
+	srv := createMockServer(t)
 	defer srv.Stop()
 	var wg sync.WaitGroup
 	srv.handler.modifier = &wg
@@ -114,7 +114,7 @@ func TestDriverOptions_SetCompression(t *testing.T) {
 }
 
 func TestDriverOptions_ConnectTimeout(t *testing.T) {
-	srv := CreateMockServer(t)
+	srv := createMockServer(t)
 	defer srv.Stop()
 
 	conn, err := sql.Open("mysql", "root@127.0.0.1:3307/test?timeout=1s")
@@ -131,7 +131,7 @@ func TestDriverOptions_ConnectTimeout(t *testing.T) {
 }
 
 func TestDriverOptions_BufferSize(t *testing.T) {
-	srv := CreateMockServer(t)
+	srv := createMockServer(t)
 	defer srv.Stop()
 
 	SetDSNOptions(map[string]DriverOption{
@@ -156,7 +156,7 @@ func TestDriverOptions_BufferSize(t *testing.T) {
 }
 
 func TestDriverOptions_ReadTimeout(t *testing.T) {
-	srv := CreateMockServer(t)
+	srv := createMockServer(t)
 	defer srv.Stop()
 
 	conn, err := sql.Open("mysql", "root@127.0.0.1:3307/test?readTimeout=100ms")
@@ -177,7 +177,7 @@ func TestDriverOptions_ReadTimeout(t *testing.T) {
 }
 
 func TestDriverOptions_writeTimeout(t *testing.T) {
-	srv := CreateMockServer(t)
+	srv := createMockServer(t)
 	defer srv.Stop()
 
 	// use a writeTimeout that will fail parsing by ParseDuration resulting
@@ -224,7 +224,7 @@ func TestDriverOptions_namedValueChecker(t *testing.T) {
 		return nil
 	})
 
-	srv := CreateMockServer(t)
+	srv := createMockServer(t)
 	defer srv.Stop()
 	conn, err := sql.Open("mysql", "root@127.0.0.1:3307/test?writeTimeout=1s")
 	defer func() {
@@ -265,9 +265,9 @@ func TestDriverOptions_namedValueChecker(t *testing.T) {
 	require.True(t, math.MaxUint64 == a)
 }
 
-func CreateMockServer(t *testing.T) *testServer {
-	inMemProvider := server.NewInMemoryProvider()
-	inMemProvider.AddUser(*testUser, *testPassword)
+func createMockServer(t *testing.T) *testServer {
+	authHandler := server.NewInMemoryAuthenticationHandler()
+	require.NoError(t, authHandler.AddUser(*testUser, *testPassword))
 	defaultServer := server.NewDefaultServer()
 
 	l, err := net.Listen("tcp", "127.0.0.1:3307")
@@ -285,7 +285,7 @@ func CreateMockServer(t *testing.T) *testServer {
 			}
 
 			go func() {
-				co, err := s.NewCustomizedConn(conn, inMemProvider, handler)
+				co, err := s.NewCustomizedConn(conn, authHandler, handler)
 				if err != nil {
 					return
 				}
@@ -314,7 +314,7 @@ func (h *mockHandler) UseDB(dbName string) error {
 	return nil
 }
 
-func (h *mockHandler) handleQuery(query string, binary bool, args []interface{}) (*mysql.Result, error) {
+func (h *mockHandler) handleQuery(query string, binary bool, args []any) (*mysql.Result, error) {
 	defer func() {
 		if h.modifier != nil {
 			h.modifier.Done()
@@ -329,12 +329,12 @@ func (h *mockHandler) handleQuery(query string, binary bool, args []interface{})
 		var err error
 		// for handle go mysql driver select @@max_allowed_packet
 		if strings.Contains(strings.ToLower(query), "max_allowed_packet") {
-			r, err = mysql.BuildSimpleResultset([]string{"@@max_allowed_packet"}, [][]interface{}{
+			r, err = mysql.BuildSimpleResultset([]string{"@@max_allowed_packet"}, [][]any{
 				{mysql.MaxPayloadLen},
 			}, binary)
 		} else {
 			if ss[1] == "?" {
-				r, err = mysql.BuildSimpleResultset([]string{"a"}, [][]interface{}{
+				r, err = mysql.BuildSimpleResultset([]string{"a"}, [][]any{
 					{args[0].(int64)},
 				}, binary)
 			} else {
@@ -347,7 +347,7 @@ func (h *mockHandler) handleQuery(query string, binary bool, args []interface{})
 					aValue = math.MaxUint64
 				}
 
-				r, err = mysql.BuildSimpleResultset([]string{"a", "b"}, [][]interface{}{
+				r, err = mysql.BuildSimpleResultset([]string{"a", "b"}, [][]any{
 					{aValue, "hello world"},
 				}, binary)
 			}
@@ -355,15 +355,14 @@ func (h *mockHandler) handleQuery(query string, binary bool, args []interface{})
 
 		if err != nil {
 			return nil, errors.Trace(err)
-		} else {
-			return &mysql.Result{
-				Status:       0,
-				Warnings:     0,
-				InsertId:     0,
-				AffectedRows: 0,
-				Resultset:    r,
-			}, nil
 		}
+		return &mysql.Result{
+			Status:       0,
+			Warnings:     0,
+			InsertId:     0,
+			AffectedRows: 0,
+			Resultset:    r,
+		}, nil
 	case "insert":
 		return &mysql.Result{
 			Status:       0,
@@ -385,13 +384,13 @@ func (h *mockHandler) HandleFieldList(table string, fieldWildcard string) ([]*my
 	return nil, nil
 }
 
-func (h *mockHandler) HandleStmtPrepare(query string) (params int, columns int, context interface{}, err error) {
+func (h *mockHandler) HandleStmtPrepare(query string) (params int, columns int, context any, err error) {
 	params = 1
 	columns = 2
 	return params, columns, nil, nil
 }
 
-func (h *mockHandler) HandleStmtExecute(context interface{}, query string, args []interface{}) (*mysql.Result, error) {
+func (h *mockHandler) HandleStmtExecute(context any, query string, args []any) (*mysql.Result, error) {
 	if strings.HasPrefix(strings.ToLower(query), "select") {
 		return h.handleQuery(query, true, args)
 	}
@@ -405,7 +404,7 @@ func (h *mockHandler) HandleStmtExecute(context interface{}, query string, args 
 	}, nil
 }
 
-func (h *mockHandler) HandleStmtClose(context interface{}) error {
+func (h *mockHandler) HandleStmtClose(context any) error {
 	return nil
 }
 

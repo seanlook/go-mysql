@@ -19,8 +19,8 @@ type connTestSuite struct {
 }
 
 func TestConnSuite(t *testing.T) {
-	segs := strings.Split(*test_util.MysqlPort, ",")
-	for _, seg := range segs {
+	segs := strings.SplitSeq(*test_util.MysqlPort, ",")
+	for seg := range segs {
 		suite.Run(t, &connTestSuite{port: seg})
 	}
 }
@@ -30,9 +30,9 @@ func (s *connTestSuite) SetupSuite() {
 	addr := fmt.Sprintf("%s:%s", *test_util.MysqlHost, s.port)
 	s.c, err = Connect(addr, *testUser, *testPassword, "", func(c *Conn) error {
 		// required for the ExecuteMultiple test
-		c.SetCapability(mysql.CLIENT_MULTI_STATEMENTS)
+		err = c.SetCapability(mysql.CLIENT_MULTI_STATEMENTS)
 		c.SetAttributes(map[string]string{"attrtest": "attrvalue"})
-		return nil
+		return err
 	})
 	require.NoError(s.T(), err)
 
@@ -42,7 +42,7 @@ func (s *connTestSuite) SetupSuite() {
 	_, err = s.c.Execute("USE " + *testDB)
 	require.NoError(s.T(), err)
 
-	s.testExecute_CreateTable()
+	s.testExecuteCreateTable()
 }
 
 func (s *connTestSuite) TearDownSuite() {
@@ -50,7 +50,7 @@ func (s *connTestSuite) TearDownSuite() {
 		return
 	}
 
-	s.testExecute_DropTable()
+	s.testExecuteDropTable()
 
 	if s.c != nil {
 		s.c.Close()
@@ -62,7 +62,7 @@ var (
 	testExecuteSelectStreamingTablename = "execute_plain_table"
 )
 
-func (s *connTestSuite) testExecute_CreateTable() {
+func (s *connTestSuite) testExecuteCreateTable() {
 	str := `CREATE TABLE IF NOT EXISTS ` + testExecuteSelectStreamingTablename + ` (
           id INT UNSIGNED NOT NULL,
           str VARCHAR(256),
@@ -88,7 +88,7 @@ func (s *connTestSuite) testExecute_CreateTable() {
 	}
 }
 
-func (s *connTestSuite) testExecute_DropTable() {
+func (s *connTestSuite) testExecuteDropTable() {
 	_, err := s.c.Execute(`drop table if exists ` + testExecuteSelectStreamingTablename)
 	require.NoError(s.T(), err)
 }
@@ -144,7 +144,7 @@ func (s *connTestSuite) TestExecuteMultiple() {
 
 func (s *connTestSuite) TestExecuteSelectStreaming() {
 	var (
-		expectedRowId                int64
+		expectedRowID                int64
 		perResultCallbackCalledTimes int
 		result                       mysql.Result
 	)
@@ -164,11 +164,11 @@ func (s *connTestSuite) TestExecuteSelectStreaming() {
 			str := row[1].AsString()
 
 			// Check order of rows
-			require.Equal(s.T(), expectedRowId, id)
+			require.Equal(s.T(), expectedRowID, id)
 			// Check string values (protection from incorrect reuse of memory)
 			require.Equal(s.T(), testExecuteSelectStreamingRows[id], string(str))
 
-			expectedRowId++
+			expectedRowID++
 
 			return nil
 		}, func(result *mysql.Result) error {
@@ -183,7 +183,7 @@ func (s *connTestSuite) TestExecuteSelectStreaming() {
 	require.NoError(s.T(), err)
 
 	// Check total rows count
-	require.Equal(s.T(), int64(len(testExecuteSelectStreamingRows)), expectedRowId)
+	require.Equal(s.T(), int64(len(testExecuteSelectStreamingRows)), expectedRowID)
 
 	// Check perResultCallback call count
 	require.Equal(s.T(), 1, perResultCallbackCalledTimes)
@@ -209,4 +209,38 @@ func (s *connTestSuite) TestSetQueryAttributes() {
 		},
 	}
 	require.Equal(s.T(), expected, s.c.queryAttributes)
+}
+
+func (s *connTestSuite) TestUseDB() {
+	_, err := s.c.Execute("create database if not exists proxier;")
+	require.NoError(s.T(), err)
+	err = s.c.UseDB("proxier")
+	require.NoError(s.T(), err)
+	result, err := s.c.Execute("select database();")
+	require.NoError(s.T(), err)
+	value, err := result.GetString(0, 0)
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), "proxier", value)
+	_, err = s.c.Execute("drop database proxier;")
+	require.NoError(s.T(), err)
+	_, err = s.c.Execute("create database proxier;")
+	require.NoError(s.T(), err)
+	err = s.c.UseDB("proxier")
+	require.NoError(s.T(), err)
+	result, err = s.c.Execute("select database();")
+	require.NoError(s.T(), err)
+	value, err = result.GetString(0, 0)
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), "proxier", value)
+	_, err = s.c.Execute("drop database proxier;")
+	require.NoError(s.T(), err)
+	err = s.c.UseDB("test")
+	require.NoError(s.T(), err)
+}
+
+func TestCapabilityString(t *testing.T) {
+	conn := Conn{
+		capability: mysql.CLIENT_PROTOCOL_41 | mysql.CLIENT_DEPRECATE_EOF,
+	}
+	require.Equal(t, "CLIENT_PROTOCOL_41|CLIENT_DEPRECATE_EOF", conn.CapabilityString())
 }

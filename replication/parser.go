@@ -39,8 +39,11 @@ type BinlogParser struct {
 
 	useDecimal               bool
 	useFloatWithTrailingZero bool
+	renderJSONAsMySQLText    bool
 	ignoreJSONDecodeErr      bool
 	verifyChecksum           bool
+
+	payloadDecoderConcurrency int
 
 	rowsEventDecodeFunc func(*RowsEvent, []byte) error
 
@@ -273,6 +276,12 @@ func (p *BinlogParser) SetUseFloatWithTrailingZero(useFloatWithTrailingZero bool
 	p.useFloatWithTrailingZero = useFloatWithTrailingZero
 }
 
+// SetRenderJSONAsMySQLText toggles MySQL-text JSON rendering for RowsEvents.
+// See BinlogSyncerConfig.RenderJSONAsMySQLText for the full rationale.
+func (p *BinlogParser) SetRenderJSONAsMySQLText(renderJSONAsMySQLText bool) {
+	p.renderJSONAsMySQLText = renderJSONAsMySQLText
+}
+
 func (p *BinlogParser) SetIgnoreJSONDecodeError(ignoreJSONDecodeErr bool) {
 	p.ignoreJSONDecodeErr = ignoreJSONDecodeErr
 }
@@ -285,12 +294,40 @@ func (p *BinlogParser) SetFlavor(flavor string) {
 	p.flavor = flavor
 }
 
+func (p *BinlogParser) SetPayloadDecoderConcurrency(concurrency int) {
+	p.payloadDecoderConcurrency = concurrency
+}
+
 func (p *BinlogParser) SetRowsEventDecodeFunc(rowsEventDecodeFunc func(*RowsEvent, []byte) error) {
 	p.rowsEventDecodeFunc = rowsEventDecodeFunc
 }
 
 func (p *BinlogParser) SetTableMapOptionalMetaDecodeFunc(tableMapOptionalMetaDecondeFunc func([]byte) error) {
 	p.tableMapOptionalMetaDecodeFunc = tableMapOptionalMetaDecondeFunc
+}
+
+// cloneForPayloadDecode returns a new BinlogParser that inherits the
+// caller's user-settable decode options (UseDecimal, RenderJSONAsMySQLText,
+// ParseTime, etc.) but with checksum verification disabled and a fresh
+// tables map. It is used to parse the events nested inside a
+// TRANSACTION_PAYLOAD_EVENT, so that those rows decode with the same
+// options as uncompressed rows.
+func (p *BinlogParser) cloneForPayloadDecode() *BinlogParser {
+	inner := NewBinlogParser()
+	inner.flavor = p.flavor
+	inner.rawMode = p.rawMode
+	inner.parseTime = p.parseTime
+	inner.timestampStringLocation = p.timestampStringLocation
+	inner.useDecimal = p.useDecimal
+	inner.useFloatWithTrailingZero = p.useFloatWithTrailingZero
+	inner.renderJSONAsMySQLText = p.renderJSONAsMySQLText
+	inner.ignoreJSONDecodeErr = p.ignoreJSONDecodeErr
+	// verifyChecksum is intentionally left at the zero value: nested
+	// events do not carry their own checksum trailers.
+	inner.payloadDecoderConcurrency = p.payloadDecoderConcurrency
+	inner.rowsEventDecodeFunc = p.rowsEventDecodeFunc
+	inner.tableMapOptionalMetaDecodeFunc = p.tableMapOptionalMetaDecodeFunc
+	return inner
 }
 
 func (p *BinlogParser) parseHeader(data []byte) (*EventHeader, error) {
@@ -312,7 +349,7 @@ func (p *BinlogParser) parseEvent(h *EventHeader, data []byte, rawData []byte) (
 		if p.format != nil && p.format.ChecksumAlgorithm == BINLOG_CHECKSUM_ALG_CRC32 {
 			err := p.verifyCrc32Checksum(rawData)
 			if err != nil {
-				return nil, err
+				return nil, fmt.Errorf("failed checksum for %v, log pos %d: %v", h.EventType, h.LogPos, err)
 			}
 			data = data[0 : len(data)-BinlogChecksumLength]
 		}
@@ -389,6 +426,10 @@ func (p *BinlogParser) parseEvent(h *EventHeader, data []byte, rawData []byte) (
 				e = &IntVarEvent{}
 			case TRANSACTION_PAYLOAD_EVENT:
 				e = p.newTransactionPayloadEvent()
+			case HEARTBEAT_EVENT:
+				e = &HeartbeatEvent{Version: 1}
+			case HEARTBEAT_LOG_EVENT_V2:
+				e = &HeartbeatEvent{Version: 2}
 			default:
 				e = &GenericEvent{}
 			}
@@ -409,6 +450,16 @@ func (p *BinlogParser) parseEvent(h *EventHeader, data []byte, rawData []byte) (
 	} else {
 		err = e.Decode(data)
 	}
+
+	if fde, ok := e.(*FormatDescriptionEvent); ok {
+		if fde.ChecksumAlgorithm == BINLOG_CHECKSUM_ALG_CRC32 {
+			err := p.verifyCrc32Checksum(rawData)
+			if err != nil {
+				return nil, fmt.Errorf("failed checksum for %v, log pos %d: %v", h.EventType, h.LogPos, err)
+			}
+		}
+	}
+
 	if err != nil {
 		return nil, &EventError{h, err.Error(), data}
 	}
@@ -494,6 +545,7 @@ func (p *BinlogParser) newRowsEvent(h *EventHeader) *RowsEvent {
 	e.timestampStringLocation = p.timestampStringLocation
 	e.useDecimal = p.useDecimal
 	e.useFloatWithTrailingZero = p.useFloatWithTrailingZero
+	e.renderJSONAsMySQLText = p.renderJSONAsMySQLText
 	e.ignoreJSONDecodeErr = p.ignoreJSONDecodeErr
 
 	switch h.EventType {
@@ -550,6 +602,8 @@ func (p *BinlogParser) newRowsEvent(h *EventHeader) *RowsEvent {
 func (p *BinlogParser) newTransactionPayloadEvent() *TransactionPayloadEvent {
 	e := &TransactionPayloadEvent{}
 	e.format = *p.format
+	e.concurrency = p.payloadDecoderConcurrency
+	e.parent = p
 
 	return e
 }

@@ -26,6 +26,10 @@ const (
 	TypeTableHash    = "table_hash"
 	TypePrimaryHash  = "primary_hash"
 	TypeLogicalClock = "logical_clock"
+var (
+	name   = flag.String("name", "", "binlog file name")
+	offset = flag.Int64("offset", 0, "parse start offset")
+	verify = flag.Bool("verify", false, "verify checksum")
 )
 
 func parseBinlogFile() error {
@@ -34,6 +38,7 @@ func parseBinlogFile() error {
 
 	p := replication.NewBinlogParser()
 	p.PrintEventInfo = printEventInfo
+	p.SetVerifyChecksum(*verify)
 
 	p.Flashback = viper.GetBool("flashback")
 	p.ConvUpdateToWrite = viper.GetBool("conv-rows-update-to-write")
@@ -59,6 +64,10 @@ func parseBinlogFile() error {
 		} else {
 			p.RenameRule = rules
 		}
+	err := p.ParseFile(*name, *offset, f)
+	if err != nil {
+		println(err.Error())
+		os.Exit(1)
 	}
 
 	timeFilter := &replication.TimeFilter{

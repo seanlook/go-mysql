@@ -22,8 +22,8 @@ type clientTestSuite struct {
 }
 
 func TestClientSuite(t *testing.T) {
-	segs := strings.Split(*test_util.MysqlPort, ",")
-	for _, seg := range segs {
+	segs := strings.SplitSeq(*test_util.MysqlPort, ",")
+	for seg := range segs {
 		suite.Run(t, &clientTestSuite{port: seg})
 	}
 }
@@ -46,8 +46,8 @@ func (s *clientTestSuite) SetupSuite() {
 	_, err = s.c.Execute("USE " + *testDB)
 	require.NoError(s.T(), err)
 
-	s.testConn_CreateTable()
-	s.testStmt_CreateTable()
+	s.testConnCreateTable()
+	s.testStmtCreateTable()
 }
 
 func (s *clientTestSuite) TearDownSuite() {
@@ -55,20 +55,20 @@ func (s *clientTestSuite) TearDownSuite() {
 		return
 	}
 
-	s.testConn_DropTable()
-	s.testStmt_DropTable()
+	s.testConnDropTable()
+	s.testStmtDropTable()
 
 	if s.c != nil {
 		s.c.Close()
 	}
 }
 
-func (s *clientTestSuite) testConn_DropTable() {
+func (s *clientTestSuite) testConnDropTable() {
 	_, err := s.c.Execute("drop table if exists mixer_test_conn")
 	require.NoError(s.T(), err)
 }
 
-func (s *clientTestSuite) testConn_CreateTable() {
+func (s *clientTestSuite) testConnCreateTable() {
 	str := `CREATE TABLE IF NOT EXISTS mixer_test_conn (
           id BIGINT(64) UNSIGNED  NOT NULL,
           str VARCHAR(256),
@@ -92,7 +92,18 @@ func (s *clientTestSuite) TestConn_Ping() {
 func (s *clientTestSuite) TestConn_Compress() {
 	addr := fmt.Sprintf("%s:%s", *test_util.MysqlHost, s.port)
 	conn, err := Connect(addr, *testUser, *testPassword, "", func(conn *Conn) error {
-		conn.SetCapability(mysql.CLIENT_COMPRESS)
+		return conn.SetCapability(mysql.CLIENT_COMPRESS)
+	})
+	require.NoError(s.T(), err)
+
+	_, err = conn.Execute("SELECT VERSION()")
+	require.NoError(s.T(), err)
+}
+
+func (s *clientTestSuite) TestConn_NoDeprecateEOF() {
+	addr := fmt.Sprintf("%s:%s", *test_util.MysqlHost, s.port)
+	conn, err := Connect(addr, *testUser, *testPassword, "", func(conn *Conn) error {
+		conn.UnsetCapability(mysql.CLIENT_DEPRECATE_EOF)
 		return nil
 	})
 	require.NoError(s.T(), err)
@@ -103,37 +114,28 @@ func (s *clientTestSuite) TestConn_Compress() {
 
 func (s *clientTestSuite) TestConn_SetCapability() {
 	caps := []uint32{
-		mysql.CLIENT_LONG_PASSWORD,
 		mysql.CLIENT_FOUND_ROWS,
-		mysql.CLIENT_LONG_FLAG,
-		mysql.CLIENT_CONNECT_WITH_DB,
-		mysql.CLIENT_NO_SCHEMA,
-		mysql.CLIENT_COMPRESS,
-		mysql.CLIENT_ODBC,
-		mysql.CLIENT_LOCAL_FILES,
 		mysql.CLIENT_IGNORE_SPACE,
-		mysql.CLIENT_PROTOCOL_41,
-		mysql.CLIENT_INTERACTIVE,
-		mysql.CLIENT_SSL,
-		mysql.CLIENT_IGNORE_SIGPIPE,
-		mysql.CLIENT_TRANSACTIONS,
-		mysql.CLIENT_RESERVED,
-		mysql.CLIENT_SECURE_CONNECTION,
 		mysql.CLIENT_MULTI_STATEMENTS,
 		mysql.CLIENT_MULTI_RESULTS,
 		mysql.CLIENT_PS_MULTI_RESULTS,
-		mysql.CLIENT_PLUGIN_AUTH,
 		mysql.CLIENT_CONNECT_ATTRS,
-		mysql.CLIENT_PLUGIN_AUTH_LENENC_CLIENT_DATA,
+		mysql.CLIENT_COMPRESS,
+		mysql.CLIENT_ZSTD_COMPRESSION_ALGORITHM,
+		mysql.CLIENT_LOCAL_FILES,
 	}
 
 	for _, capI := range caps {
 		require.False(s.T(), s.c.ccaps&capI > 0)
-		s.c.SetCapability(capI)
+		err := s.c.SetCapability(capI)
+		require.NoError(s.T(), err, "capability: %d", capI)
 		require.True(s.T(), s.c.ccaps&capI > 0)
 		s.c.UnsetCapability(capI)
 		require.False(s.T(), s.c.ccaps&capI > 0)
 	}
+
+	err := s.c.SetCapability(mysql.CLIENT_REMEMBER_OPTIONS + 10)
+	require.Error(s.T(), err)
 }
 
 // NOTE for MySQL 5.5 and 5.6, server side has to config SSL to pass the TLS test, otherwise, it will throw error that
@@ -191,7 +193,7 @@ func (s *clientTestSuite) TestConn_Insert() {
 func (s *clientTestSuite) TestConn_Insert2() {
 	str := `insert into mixer_test_conn (id, j) values(?, ?)`
 	j := json.RawMessage(`[]`)
-	pkg, err := s.c.Execute(str, []interface{}{2, j}...)
+	pkg, err := s.c.Execute(str, []any{2, j}...)
 	require.NoError(s.T(), err)
 	require.Equal(s.T(), uint64(1), pkg.AffectedRows)
 }
@@ -264,11 +266,12 @@ func (s *clientTestSuite) TestConn_SetCollation() {
 	require.Error(s.T(), err)
 }
 
-func (s *clientTestSuite) testStmt_DropTable() {
+func (s *clientTestSuite) testStmtDropTable() {
 	str := `drop table if exists mixer_test_stmt`
 
 	stmt, err := s.c.Prepare(str)
 	require.NoError(s.T(), err)
+	require.Zero(s.T(), stmt.WarningsNum())
 
 	defer stmt.Close()
 
@@ -276,7 +279,7 @@ func (s *clientTestSuite) testStmt_DropTable() {
 	require.NoError(s.T(), err)
 }
 
-func (s *clientTestSuite) testStmt_CreateTable() {
+func (s *clientTestSuite) testStmtCreateTable() {
 	str := `CREATE TABLE IF NOT EXISTS mixer_test_stmt (
           id BIGINT(64) UNSIGNED  NOT NULL,
           str VARCHAR(256),

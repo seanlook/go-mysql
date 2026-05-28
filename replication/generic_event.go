@@ -162,6 +162,3 @@ func (e *GenericEvent) Decode(data []byte) error {
 // 	MessageLength uint8
 // 	Message       []byte
 // }
-
-// type HeartbeatEvent struct {
-// }

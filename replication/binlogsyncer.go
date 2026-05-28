@@ -79,6 +79,37 @@ type BinlogSyncerConfig struct {
 	// FloatWithTrailingZero structure for floats.
 	UseFloatWithTrailingZero bool
 
+	// RenderJSONAsMySQLText, when true, makes the JSONB decoder emit text
+	// that is faithful to each value's original JSONB type tag where the
+	// JSON text grammar can express it. The default decode->json.Marshal
+	// path is lossy for DOUBLE and (less importantly) NEWDECIMAL, which
+	// matters when replaying the output back into a MySQL JSON column.
+	//
+	// Per-tag behaviour:
+	//   - JSONB_DOUBLE 1.0 renders as "1.0" (not "1"), so MySQL re-stores
+	//     it as JSONB_DOUBLE rather than JSONB_INT.
+	//   - JSONB_OPAQUE NEWDECIMAL renders as an unquoted number rather
+	//     than a quoted string. Note that MySQL's JSON text grammar has
+	//     no syntax for a decimal literal: re-inserting the text creates
+	//     a JSON DOUBLE, not the original JSONB_OPAQUE NEWDECIMAL. The
+	//     numeric value is preserved, the opaque type tag is not.
+	//   - JSONB_OPAQUE DATE renders as "YYYY-MM-DD" (not the legacy
+	//     "YYYY-MM-DD 00:00:00.000000").
+	//   - JSONB_OPAQUE values of unrecognised inner types render as
+	//     "base64:typeN:<b64>" (matching mysqld) instead of the raw
+	//     payload bytes.
+	//   - Object key order is preserved from the JSONB stream
+	//     (length-then-bytes) instead of the lexicographic order Go maps
+	//     produce, matching MySQL's own text output.
+	//
+	// Other notes:
+	//   - UseDecimal and UseFloatWithTrailingZero have no effect on JSON
+	//     columns when this is enabled (the renderer always emits
+	//     MySQL-style text).
+	//   - Only applies to JSON columns; non-JSON DECIMAL/DATE/etc. columns
+	//     are unaffected.
+	RenderJSONAsMySQLText bool
+
 	// RecvBufferSize sets the size in bytes of the operating system's receive buffer associated with the connection.
 	RecvBufferSize int
 
@@ -127,6 +158,16 @@ type BinlogSyncerConfig struct {
 	DiscardGTIDSet bool
 
 	EventCacheCount int
+
+	// FillZeroLogPos enables dynamic LogPos calculation for MariaDB.
+	// When enabled, automatically adds BINLOG_SEND_ANNOTATE_ROWS_EVENT flag
+	// to ensure correct position calculation in MariaDB 11.4+.
+	// Only works with MariaDB flavor.
+	FillZeroLogPos bool
+
+	// PayloadDecoderConcurrency is used to control concurrency for decoding TransactionPayloadEvent.
+	// Default 0,  this will be set to GOMAXPROCS.
+	PayloadDecoderConcurrency int
 
 	// SynchronousEventHandler is used for synchronous event handling.
 	// This should not be used together with StartBackupWithHandler.
@@ -201,7 +242,9 @@ func NewBinlogSyncer(cfg BinlogSyncerConfig) *BinlogSyncer {
 	b.parser.SetTimestampStringLocation(b.cfg.TimestampStringLocation)
 	b.parser.SetUseDecimal(b.cfg.UseDecimal)
 	b.parser.SetUseFloatWithTrailingZero(b.cfg.UseFloatWithTrailingZero)
+	b.parser.SetRenderJSONAsMySQLText(b.cfg.RenderJSONAsMySQLText)
 	b.parser.SetVerifyChecksum(b.cfg.VerifyChecksum)
+	b.parser.SetPayloadDecoderConcurrency(cfg.PayloadDecoderConcurrency)
 	b.parser.SetRowsEventDecodeFunc(b.cfg.RowsEventDecodeFunc)
 	b.parser.SetTableMapOptionalMetaDecodeFunc(b.cfg.TableMapOptionalMetaDecodeFunc)
 	b.running = false
@@ -229,9 +272,17 @@ func (b *BinlogSyncer) close() {
 	b.cancel()
 
 	if b.c != nil {
-		err := b.c.SetReadDeadline(utils.Now().Add(100 * time.Millisecond))
-		if err != nil {
-			b.cfg.Logger.Warn("could not set read deadline", slog.Any("error", err))
+		// SetReadDeadline unblocks ReadPacket so onStream notices ctx cancellation.
+		// Some transports (notably SSH tunnels) refuse deadlines with an error, in
+		// which case close the underlying connection to force ReadPacket to return.
+		// Otherwise wg.Wait below parks forever when KILL also fails to reach server
+		// (e.g. thread already reaped, "ERROR 1094 unknown thread id")
+		if err := b.c.SetReadDeadline(utils.Now().Add(100 * time.Millisecond)); err != nil {
+			b.cfg.Logger.Warn("could not set read deadline, closing connection to unblock reader",
+				slog.Any("error", err))
+			if err := b.c.Close(); err != nil {
+				b.cfg.Logger.Warn("could not close connection", slog.Any("error", err))
+			}
 		}
 	}
 
@@ -309,22 +360,22 @@ func (b *BinlogSyncer) registerSlave() error {
 
 	// for mysql 5.6+, binlog has a crc32 checksum
 	// before mysql 5.6, this will not work, don't matter.:-)
-	if r, err := b.c.Execute("SHOW GLOBAL VARIABLES LIKE 'BINLOG_CHECKSUM'"); err != nil {
+	r, err := b.c.Execute("SHOW GLOBAL VARIABLES LIKE 'BINLOG_CHECKSUM'")
+	if err != nil {
 		return errors.Trace(err)
-	} else {
-		s, _ := r.GetString(0, 1)
-		if s != "" {
-			// maybe CRC32 or NONE
+	}
+	s, _ := r.GetString(0, 1)
+	if s != "" {
+		// maybe CRC32 or NONE
 
-			// mysqlbinlog.cc use NONE, see its below comments:
-			// Make a notice to the server that this client
-			// is checksum-aware. It does not need the first fake Rotate
-			// necessary checksummed.
-			// That preference is specified below.
+		// mysqlbinlog.cc use NONE, see its below comments:
+		// Make a notice to the server that this client
+		// is checksum-aware. It does not need the first fake Rotate
+		// necessary checksummed.
+		// That preference is specified below.
 
-			if _, err = b.c.Execute(`SET @master_binlog_checksum='NONE', @source_binlog_checksum='NONE'`); err != nil {
-				return errors.Trace(err)
-			}
+		if _, err = b.c.Execute(`SET @master_binlog_checksum='NONE', @source_binlog_checksum='NONE'`); err != nil {
+			return errors.Trace(err)
 		}
 	}
 
@@ -374,18 +425,24 @@ func (b *BinlogSyncer) enableSemiSync() error {
 		return nil
 	}
 
-	if r, err := b.c.Execute("SHOW VARIABLES LIKE 'rpl_semi_sync_master_enabled';"); err != nil {
+	// MySQL 8.0.26 renamed rpl_semi_sync_master_enabled to
+	// rpl_semi_sync_source_enabled (keeping the old name as an alias) and
+	// 8.4.0 removed the alias, so accept either spelling.
+	r, err := b.c.Execute("SHOW VARIABLES WHERE Variable_name IN ('rpl_semi_sync_master_enabled', 'rpl_semi_sync_source_enabled')")
+	if err != nil {
 		return errors.Trace(err)
-	} else {
-		s, _ := r.GetString(0, 1)
-		if s != "ON" {
-			b.cfg.Logger.Error("master does not support semi synchronous replication, use no semi-sync")
-			b.cfg.SemiSyncEnabled = false
-			return nil
-		}
+	}
+	s, _ := r.GetString(0, 1)
+	if s != "ON" {
+		b.cfg.Logger.Error("source does not support semi synchronous replication, use no semi-sync")
+		b.cfg.SemiSyncEnabled = false
+		return nil
 	}
 
-	_, err := b.c.Execute(`SET @rpl_semi_sync_slave = 1;`)
+	// MySQL 8.0.26 also renamed the @rpl_semi_sync_slave session variable
+	// to @rpl_semi_sync_replica. These are user variables, so setting both
+	// is harmless on either server version.
+	_, err = b.c.Execute(`SET @rpl_semi_sync_slave = 1, @rpl_semi_sync_replica = 1;`)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -509,7 +566,14 @@ func (b *BinlogSyncer) writeBinlogDumpCommand(p mysql.Position) error {
 	binary.LittleEndian.PutUint32(data[pos:], p.Pos)
 	pos += 4
 
-	binary.LittleEndian.PutUint16(data[pos:], b.cfg.DumpCommandFlag)
+	dumpCommandFlag := b.cfg.DumpCommandFlag
+	if b.cfg.FillZeroLogPos && b.cfg.Flavor == mysql.MariaDBFlavor {
+		// Add BINLOG_SEND_ANNOTATE_ROWS_EVENT flag when FillZeroLogPos is enabled.
+		// This ensures the server sends ANNOTATE_ROWS_EVENT events which are needed
+		// for correct LogPos calculation in MariaDB 11.4+, where some events have LogPos=0.
+		dumpCommandFlag |= BINLOG_SEND_ANNOTATE_ROWS_EVENT
+	}
+	binary.LittleEndian.PutUint16(data[pos:], dumpCommandFlag)
 	pos += 2
 
 	binary.LittleEndian.PutUint32(data[pos:], b.cfg.ServerID)
@@ -665,7 +729,7 @@ func (b *BinlogSyncer) retrySync() error {
 	b.prevMySQLGTIDEvent = nil
 
 	if b.prevGset != nil {
-		extra := []interface{}{slog.String("GTID Set", b.prevGset.String())}
+		extra := []any{slog.String("GTID Set", b.prevGset.String())}
 		if b.currGset != nil {
 			extra = append(extra, slog.String("last read GTID", b.currGset.String()))
 		}
@@ -861,6 +925,13 @@ func (b *BinlogSyncer) handleEventAndACK(s *BinlogStreamer, e *BinlogEvent, need
 	if e.Header.LogPos > 0 {
 		// Some events like FormatDescriptionEvent return 0, ignore.
 		b.nextPos.Pos = e.Header.LogPos
+	} else if b.shouldCalculateDynamicLogPos(e) {
+		calculatedPos := b.nextPos.Pos + e.Header.EventSize
+		e.Header.LogPos = calculatedPos
+		b.nextPos.Pos = calculatedPos
+		b.cfg.Logger.Debug("MariaDB dynamic LogPos calculation",
+			slog.String("eventType", e.Header.EventType.String()),
+			slog.Uint64("logPos", uint64(calculatedPos)))
 	}
 
 	// Handle event types to update positions and GTID sets
@@ -890,7 +961,26 @@ func (b *BinlogSyncer) handleEventAndACK(s *BinlogStreamer, e *BinlogEvent, need
 			b.prevGset.(*mysql.MysqlGTIDSet).AddGTID(u, b.prevMySQLGTIDEvent.GNO)
 		}
 		b.prevMySQLGTIDEvent = event
-
+	case *GtidTaggedLogEvent:
+		if b.prevGset == nil {
+			break
+		}
+		if b.currGset == nil {
+			b.currGset = b.prevGset.Clone()
+		}
+		u, err := uuid.FromBytes(event.SID)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		b.currGset.(*mysql.MysqlGTIDSet).AddGTIDWithTag(u, event.Tag, event.GNO)
+		if b.prevMySQLGTIDEvent != nil {
+			u, err = uuid.FromBytes(b.prevMySQLGTIDEvent.SID)
+			if err != nil {
+				return errors.Trace(err)
+			}
+			b.prevGset.(*mysql.MysqlGTIDSet).AddGTIDWithTag(u, b.prevMySQLGTIDEvent.Tag, b.prevMySQLGTIDEvent.GNO)
+		}
+		b.prevMySQLGTIDEvent = &event.GTIDEvent
 	case *MariadbGTIDEvent:
 		if b.prevGset == nil {
 			break
@@ -930,7 +1020,7 @@ func (b *BinlogSyncer) handleEventAndACK(s *BinlogStreamer, e *BinlogEvent, need
 		select {
 		case s.ch <- e:
 		case <-b.ctx.Done():
-			return errors.New("sync is being closed...")
+			return errors.New("sync is being closed")
 		}
 	}
 
@@ -942,6 +1032,19 @@ func (b *BinlogSyncer) handleEventAndACK(s *BinlogStreamer, e *BinlogEvent, need
 	}
 
 	return nil
+}
+
+// shouldCalculateDynamicLogPos determines if we should calculate LogPos dynamically for MariaDB events.
+// This is needed for MariaDB 11.4+ when:
+// 1. FillZeroLogPos is enabled
+// 2. We're using MariaDB flavor
+// 3. The event has LogPos=0 (indicating server didn't set it)
+// 4. The event is not artificial (not marked with LOG_EVENT_ARTIFICIAL_F flag)
+func (b *BinlogSyncer) shouldCalculateDynamicLogPos(e *BinlogEvent) bool {
+	return b.cfg.FillZeroLogPos &&
+		b.cfg.Flavor == mysql.MariaDBFlavor &&
+		e.Header.LogPos == 0 &&
+		(e.Header.Flags&LOG_EVENT_ARTIFICIAL_F) == 0
 }
 
 // getCurrentGtidSet returns a clone of the current GTID set.

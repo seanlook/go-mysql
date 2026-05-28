@@ -13,6 +13,8 @@ import (
 // On The Wire: Field Types
 // See also binary_log::codecs::binary::Transaction_payload::fields in MySQL
 // https://dev.mysql.com/doc/dev/mysql-server/latest/classbinary__log_1_1codecs_1_1binary_1_1Transaction__payload.html#a9fff7ac12ba064f40e9216565c53d07b
+//
+//nolint:revive // OTW_PAYLOAD_* names mirror the upstream MySQL binlog protocol
 const (
 	OTW_PAYLOAD_HEADER_END_MARK = iota
 	OTW_PAYLOAD_SIZE_FIELD
@@ -27,7 +29,15 @@ const (
 )
 
 type TransactionPayloadEvent struct {
-	format           FormatDescriptionEvent
+	format      FormatDescriptionEvent
+	concurrency int
+	// parent is the BinlogParser that produced this event. The inner
+	// parser used to decode the decompressed payload inherits its
+	// user-settable options (UseDecimal, RenderJSONAsMySQLText, ...) so
+	// that compressed and uncompressed rows decode identically. nil when
+	// the event is constructed outside of BinlogParser, in which case
+	// decodePayload falls back to default parser options.
+	parent           *BinlogParser
 	Size             uint64
 	UncompressedSize uint64
 	CompressionType  uint64
@@ -79,21 +89,20 @@ func (e *TransactionPayloadEvent) decodeFields(data []byte) error {
 		if fieldType == OTW_PAYLOAD_HEADER_END_MARK {
 			e.Payload = data[offset:]
 			break
-		} else {
-			fieldLength := mysql.FixedLengthInt(data[offset : offset+1])
-			offset++
-
-			switch fieldType {
-			case OTW_PAYLOAD_SIZE_FIELD:
-				e.Size = mysql.FixedLengthInt(data[offset : offset+fieldLength])
-			case OTW_PAYLOAD_COMPRESSION_TYPE_FIELD:
-				e.CompressionType = mysql.FixedLengthInt(data[offset : offset+fieldLength])
-			case OTW_PAYLOAD_UNCOMPRESSED_SIZE_FIELD:
-				e.UncompressedSize = mysql.FixedLengthInt(data[offset : offset+fieldLength])
-			}
-
-			offset += fieldLength
 		}
+		fieldLength := mysql.FixedLengthInt(data[offset : offset+1])
+		offset++
+
+		switch fieldType {
+		case OTW_PAYLOAD_SIZE_FIELD:
+			e.Size = mysql.FixedLengthInt(data[offset : offset+fieldLength])
+		case OTW_PAYLOAD_COMPRESSION_TYPE_FIELD:
+			e.CompressionType = mysql.FixedLengthInt(data[offset : offset+fieldLength])
+		case OTW_PAYLOAD_UNCOMPRESSED_SIZE_FIELD:
+			e.UncompressedSize = mysql.FixedLengthInt(data[offset : offset+fieldLength])
+		}
+
+		offset += fieldLength
 	}
 
 	return nil
@@ -105,7 +114,7 @@ func (e *TransactionPayloadEvent) decodePayload() error {
 			e.CompressionType, e.compressionType())
 	}
 
-	decoder, err := zstd.NewReader(nil, zstd.WithDecoderConcurrency(0))
+	decoder, err := zstd.NewReader(nil, zstd.WithDecoderConcurrency(e.concurrency))
 	if err != nil {
 		return err
 	}
@@ -117,10 +126,18 @@ func (e *TransactionPayloadEvent) decodePayload() error {
 	}
 
 	// The uncompressed data needs to be split up into individual events for Parse()
-	// to work on them. We can't use e.parser directly as we need to disable checksums
-	// but we still need the initialization from the FormatDescriptionEvent. We can't
-	// modify e.parser as it is used elsewhere.
-	parser := NewBinlogParser()
+	// to work on them. We can't use the parent parser directly as we need to disable
+	// checksums but we still need the initialization from the FormatDescriptionEvent.
+	// We can't modify the parent parser as it is used elsewhere. We do however want
+	// to inherit user-settable decode options (UseDecimal, RenderJSONAsMySQLText,
+	// IgnoreJSONDecodeError, ...) so that rows inside a compressed payload decode
+	// with the same semantics as uncompressed rows.
+	var parser *BinlogParser
+	if e.parent != nil {
+		parser = e.parent.cloneForPayloadDecode()
+	} else {
+		parser = NewBinlogParser()
+	}
 	parser.format = &FormatDescriptionEvent{
 		Version:                e.format.Version,
 		ServerVersion:          e.format.ServerVersion,
