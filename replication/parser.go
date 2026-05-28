@@ -190,12 +190,12 @@ func (p *BinlogParser) parseSingleEvent(r io.Reader, onEvent OnEventFunc) (bool,
 		return false, errors.Errorf("invalid body data size in event %s, need %d but got %d", h.EventType, bodyLen, len(body))
 	}
 	var e Event
-	p.SetRowsEventDecodeFunc(flashbackRowsEventFunc)
+	p.SetRowsEventDecodeFunc(flashbackRowsEventFunc) // rowsEventDecodeFunc
 
 	rawFlashbacked := make([]byte, len(rawData)) // flashback, RowsFilter 才需要新的 bytes buff，TableFilter不需要
 	copy(rawFlashbacked, rawData)
 	if h.EventType == TRANSACTION_PAYLOAD_EVENT {
-		e, _, err = p.ParseEvent2(h, body, &rawFlashbacked)
+		e, _, err = p.parseEventRewrite(h, body, &rawFlashbacked)
 		if err != nil {
 			if err == errMissingTableMapEvent {
 				return false, nil
@@ -217,7 +217,7 @@ func (p *BinlogParser) parseSingleEvent(r io.Reader, onEvent OnEventFunc) (bool,
 		return false, nil
 	}
 
-	e, rawFlashbacked, err = p.ParseEvent2(h, body, &rawFlashbacked)
+	e, rawFlashbacked, err = p.parseEventRewrite(h, body, &rawFlashbacked)
 	if err != nil {
 		if err == errMissingTableMapEvent {
 			return false, nil
@@ -327,6 +327,11 @@ func (p *BinlogParser) cloneForPayloadDecode() *BinlogParser {
 	inner.payloadDecoderConcurrency = p.payloadDecoderConcurrency
 	inner.rowsEventDecodeFunc = p.rowsEventDecodeFunc
 	inner.tableMapOptionalMetaDecodeFunc = p.tableMapOptionalMetaDecodeFunc
+
+	inner.Flashback = p.Flashback
+	inner.ConvUpdateToWrite = p.ConvUpdateToWrite
+	inner.TableFilter = p.TableFilter
+	inner.RowsFilter = p.RowsFilter
 	return inner
 }
 
@@ -442,7 +447,11 @@ func (p *BinlogParser) parseEvent(h *EventHeader, data []byte, rawData []byte) (
 	if re, ok := e.(*RowsEvent); ok {
 		re.SetDbTableFilter(p.TableFilter)
 		re.SetRowsFilter(p.RowsFilter)
+		re.flashback = p.Flashback
+		re.convUpdateToWrite = p.ConvUpdateToWrite
 		if p.rowsEventDecodeFunc != nil {
+			re.rawBytesNew = make([]byte, len(rawData))
+			copy(re.rawBytesNew, rawData)
 			err = p.rowsEventDecodeFunc(re, data)
 		} else {
 			err = e.Decode(data)

@@ -18,7 +18,9 @@ golang版本的可以实现 mysqlbinlog 同样的解析输出效果，但具备�
 ```
 cd go-mysql/cmd/go-binlogparser
 go build  -o gomysqlbinlog
+
 ```
+or just run: `make test && make build`
 
 ## gomysqlbinlog 
 

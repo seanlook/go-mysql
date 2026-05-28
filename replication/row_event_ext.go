@@ -13,7 +13,8 @@ import (
 )
 
 // flashbackRowsEventFunc data 不包括 event header
-// Decode
+// implement rowsEventDecodeFunc
+// copy from: func (e *RowsEvent) Decode()
 func flashbackRowsEventFunc(e *RowsEvent, data []byte) error {
 	//body := rawData[EventHeaderSize:]
 	pos, err := e.DecodeHeader(data)

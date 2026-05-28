@@ -504,9 +504,11 @@ var (
 	InsertEventType = []EventType{WRITE_ROWS_EVENTv2, WRITE_ROWS_EVENTv1, WRITE_ROWS_EVENTv0, TENDB_WRITE_ROWS_COMPRESSED_EVENT_V2, TENDB_WRITE_ROWS_COMPRESSED_EVENT_V1}
 )
 
-// ParseEvent2 change rawData
+// parseEventRewrite change rawData
 // rawData is a new object
-func (p *BinlogParser) ParseEvent2(h *EventHeader, data []byte, rawData *[]byte) (Event, []byte, error) {
+// copy from: func (p *BinlogParser) parseEvent()
+// 负责"单个事件的解析和改写"，不负责时间过滤/payload展开/onEvent回调
+func (p *BinlogParser) parseEventRewrite(h *EventHeader, data []byte, rawData *[]byte) (Event, []byte, error) {
 	var e Event
 
 	if h.EventType == FORMAT_DESCRIPTION_EVENT {

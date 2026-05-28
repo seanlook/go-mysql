@@ -124,7 +124,7 @@ func TestFlashbackInsertToDelete(t *testing.T) {
 
 	// 验证行数据正确解析
 	require.Len(t, e.Rows, 1)
-	require.Equal(t, uint32(1), e.Rows[0][0])
+	require.Equal(t, int32(1), e.Rows[0][0])
 }
 
 // TestFlashbackDeleteToInsert 验证 DELETE 事件闪回后变为 INSERT 事件
@@ -168,7 +168,7 @@ func TestFlashbackDeleteToInsert(t *testing.T) {
 
 	// 验证行数据
 	require.Len(t, e.Rows, 1)
-	require.Equal(t, uint32(42), e.Rows[0][0])
+	require.Equal(t, int32(42), e.Rows[0][0])
 }
 
 // TestFlashbackUpdateSwapImages 验证 UPDATE 事件闪回后前后镜像互换
@@ -216,8 +216,8 @@ func TestFlashbackUpdateSwapImages(t *testing.T) {
 
 	// 验证前后镜像互换：原来 BI=10, AI=20，闪回后 BI=20, AI=10
 	require.Len(t, e.Rows, 2)
-	require.Equal(t, uint32(20), e.Rows[0][0]) // 新的 BI（原来的 AI）
-	require.Equal(t, uint32(10), e.Rows[1][0]) // 新的 AI（原来的 BI）
+	require.Equal(t, int32(20), e.Rows[0][0]) // 新的 BI（原来的 AI）
+	require.Equal(t, int32(10), e.Rows[1][0]) // 新的 AI（原来的 BI）
 }
 
 // TestFlashbackMultipleRows 验证多行 INSERT 闪回
@@ -264,9 +264,9 @@ func TestFlashbackMultipleRows(t *testing.T) {
 
 	// 验证 3 行数据都正确解析
 	require.Len(t, e.Rows, 3)
-	require.Equal(t, uint32(1), e.Rows[0][0])
-	require.Equal(t, uint32(2), e.Rows[1][0])
-	require.Equal(t, uint32(3), e.Rows[2][0])
+	require.Equal(t, int32(1), e.Rows[0][0])
+	require.Equal(t, int32(2), e.Rows[1][0])
+	require.Equal(t, int32(3), e.Rows[2][0])
 }
 
 // TestFlashbackMultipleUpdateRows 验证多行 UPDATE 闪回后前后镜像互换
@@ -313,11 +313,11 @@ func TestFlashbackMultipleUpdateRows(t *testing.T) {
 	// 验证 4 行（2对 BI/AI）
 	require.Len(t, e.Rows, 4)
 	// row1: 闪回后 BI=11(原AI), AI=10(原BI)
-	require.Equal(t, uint32(11), e.Rows[0][0])
-	require.Equal(t, uint32(10), e.Rows[1][0])
+	require.Equal(t, int32(11), e.Rows[0][0])
+	require.Equal(t, int32(10), e.Rows[1][0])
 	// row2: 闪回后 BI=21(原AI), AI=20(原BI)
-	require.Equal(t, uint32(21), e.Rows[2][0])
-	require.Equal(t, uint32(20), e.Rows[3][0])
+	require.Equal(t, int32(21), e.Rows[2][0])
+	require.Equal(t, int32(20), e.Rows[3][0])
 }
 
 // TestFlashbackV1Events 验证 v1 版本事件的闪回
@@ -383,7 +383,7 @@ func TestFlashbackV1Events(t *testing.T) {
 	require.Equal(t, DELETE_ROWS_EVENTv1, e.eventType)
 	require.Equal(t, byte(DELETE_ROWS_EVENTv1), e.rawBytesNew[EventTypePos])
 	require.Len(t, e.Rows, 1)
-	require.Equal(t, uint32(5), e.Rows[0][0])
+	require.Equal(t, int32(5), e.Rows[0][0])
 }
 
 // ============================================================
@@ -468,21 +468,22 @@ func TestRowsFilterIntType(t *testing.T) {
 	// 只有 value=5 和 value=10 满足 col[0] > 3
 	require.Equal(t, 2, e.RowsMatched)
 	require.Len(t, e.Rows, 2)
-	require.Equal(t, uint32(5), e.Rows[0][0])
-	require.Equal(t, uint32(10), e.Rows[1][0])
+	require.Equal(t, int32(5), e.Rows[0][0])
+	require.Equal(t, int32(10), e.Rows[1][0])
 }
 
 // TestRowsFilterUint64Overflow 验证 BIGINT UNSIGNED 大值（超过 int64 最大值）不会溢出
 func TestRowsFilterUint64Overflow(t *testing.T) {
 	table := &TableMapEvent{
-		tableIDSize: 6,
-		TableID:     0x6c,
-		Schema:      []byte("db"),
-		Table:       []byte("tbl"),
-		ColumnCount: 1,
-		ColumnType:  []byte{MYSQL_TYPE_LONGLONG},
-		ColumnMeta:  []uint16{0},
-		NullBitmap:  []byte{0x00},
+		tableIDSize:      6,
+		TableID:          0x6c,
+		Schema:           []byte("db"),
+		Table:            []byte("tbl"),
+		ColumnCount:      1,
+		ColumnType:       []byte{MYSQL_TYPE_LONGLONG},
+		ColumnMeta:       []uint16{0},
+		NullBitmap:       []byte{0x00},
+		SignednessBitmap: []byte{0x80}, // bit=1 表示 unsigned
 	}
 
 	// uint64 值 16141183638984196173 = 0xE00101000000004D
@@ -609,7 +610,7 @@ func TestRowsFilterStringType(t *testing.T) {
 	// 只有 "hello" 匹配
 	require.Equal(t, 1, e.RowsMatched)
 	require.Len(t, e.Rows, 1)
-	require.Equal(t, uint32(1), e.Rows[0][0])
+	require.Equal(t, int32(1), e.Rows[0][0])
 	require.Equal(t, "hello", e.Rows[0][1])
 }
 
@@ -707,10 +708,10 @@ func TestRowsFilterMultiColumn(t *testing.T) {
 	// (2,200) 和 (3,300) 满足条件
 	require.Equal(t, 2, e.RowsMatched)
 	require.Len(t, e.Rows, 2)
-	require.Equal(t, uint32(2), e.Rows[0][0])
-	require.Equal(t, uint32(200), e.Rows[0][1])
-	require.Equal(t, uint32(3), e.Rows[1][0])
-	require.Equal(t, uint32(300), e.Rows[1][1])
+	require.Equal(t, int32(2), e.Rows[0][0])
+	require.Equal(t, int32(200), e.Rows[0][1])
+	require.Equal(t, int32(3), e.Rows[1][0])
+	require.Equal(t, int32(300), e.Rows[1][1])
 }
 
 // TestRowsFilterTinyIntType 验证 TINYINT 类型字段的行过滤
@@ -760,7 +761,7 @@ func TestRowsFilterTinyIntType(t *testing.T) {
 	// 只有 value=5 匹配
 	require.Equal(t, 1, e.RowsMatched)
 	require.Len(t, e.Rows, 1)
-	require.Equal(t, uint8(5), e.Rows[0][0])
+	require.Equal(t, int8(5), e.Rows[0][0])
 }
 
 // TestRowsFilterNullValue 验证 NULL 值的行过滤
@@ -809,8 +810,8 @@ func TestRowsFilterNullValue(t *testing.T) {
 
 	require.Equal(t, 1, e.RowsMatched)
 	require.Len(t, e.Rows, 1)
-	require.Equal(t, uint32(2), e.Rows[0][0])
-	require.Equal(t, uint32(100), e.Rows[0][1])
+	require.Equal(t, int32(2), e.Rows[0][0])
+	require.Equal(t, int32(100), e.Rows[0][1])
 }
 
 // TestRowsFilterAllNumberToString 验证 AllNumberToString 模式
@@ -955,8 +956,8 @@ func TestFlashbackWithRowsFilterInsert(t *testing.T) {
 	require.Equal(t, DELETE_ROWS_EVENTv2, e.eventType)
 	require.Equal(t, 2, e.RowsMatched)
 	require.Len(t, e.Rows, 2)
-	require.Equal(t, uint32(5), e.Rows[0][0])
-	require.Equal(t, uint32(10), e.Rows[1][0])
+	require.Equal(t, int32(5), e.Rows[0][0])
+	require.Equal(t, int32(10), e.Rows[1][0])
 }
 
 // TestFlashbackWithRowsFilterUpdate 验证闪回+行过滤组合：UPDATE 事件
@@ -1010,8 +1011,8 @@ func TestFlashbackWithRowsFilterUpdate(t *testing.T) {
 	require.Equal(t, 1, e.RowsMatched)
 	// 闪回后前后镜像互换: BI=55(原AI), AI=5(原BI)
 	require.Len(t, e.Rows, 2)
-	require.Equal(t, uint32(55), e.Rows[0][0]) // 新 BI（原 AI）
-	require.Equal(t, uint32(5), e.Rows[1][0])  // 新 AI（原 BI）
+	require.Equal(t, int32(55), e.Rows[0][0]) // 新 BI（原 AI）
+	require.Equal(t, int32(5), e.Rows[1][0])  // 新 AI（原 BI）
 }
 
 // TestFlashbackWithRowsFilterAllFiltered 验证闪回+行过滤：所有行都被过滤掉
@@ -1151,7 +1152,7 @@ func TestFlashbackEndToEnd(t *testing.T) {
 	re, ok := rowsEvent.Event.(*RowsEvent)
 	require.True(t, ok)
 	require.Len(t, re.Rows, 1)
-	require.Equal(t, uint32(1), re.Rows[0][0])
+	require.Equal(t, int32(1), re.Rows[0][0])
 }
 
 // TestFlashbackEndToEndWithFilter 使用 parser 完整流程测试闪回+行过滤
@@ -1251,7 +1252,7 @@ func TestDecodeData2WithRowsFilter(t *testing.T) {
 	// 只有 value=5 匹配
 	require.Equal(t, 1, e.RowsMatched)
 	require.Len(t, e.Rows, 1)
-	require.Equal(t, uint32(5), e.Rows[0][0])
+	require.Equal(t, int32(5), e.Rows[0][0])
 }
 
 // TestDecodeData2UpdateWithRowsFilter 验证非闪回模式下 UPDATE 事件的行过滤
@@ -1303,8 +1304,8 @@ func TestDecodeData2UpdateWithRowsFilter(t *testing.T) {
 	// 只有 row2 (BI=5) 满足过滤条件，保留 BI 和 AI
 	require.Equal(t, 1, e.RowsMatched)
 	require.Len(t, e.Rows, 2) // BI + AI
-	require.Equal(t, uint32(5), e.Rows[0][0])  // BI
-	require.Equal(t, uint32(55), e.Rows[1][0]) // AI
+	require.Equal(t, int32(5), e.Rows[0][0])  // BI
+	require.Equal(t, int32(55), e.Rows[1][0]) // AI
 }
 
 // TestDbTableFilterMatch 验证库表过滤：匹配的表应该被闪回处理
@@ -1353,7 +1354,7 @@ func TestDbTableFilterMatch(t *testing.T) {
 	// 匹配的表应该被闪回处理: WRITE → DELETE
 	require.Equal(t, DELETE_ROWS_EVENTv2, e.eventType)
 	require.Len(t, e.Rows, 1)
-	require.Equal(t, uint32(1), e.Rows[0][0])
+	require.Equal(t, int32(1), e.Rows[0][0])
 }
 
 // TestDbTableFilterNotMatch 验证库表过滤：不匹配的表应该被跳过
@@ -1451,7 +1452,7 @@ func TestDbTableFilterWildcard(t *testing.T) {
 	// 通配符匹配成功: DELETE → WRITE
 	require.Equal(t, WRITE_ROWS_EVENTv2, e.eventType)
 	require.Len(t, e.Rows, 1)
-	require.Equal(t, uint32(5), e.Rows[0][0])
+	require.Equal(t, int32(5), e.Rows[0][0])
 }
 
 // TestDbTableFilterExclude 验证库表过滤：排除规则
@@ -1798,7 +1799,7 @@ func TestDbTableFilterRealBinlogMatch(t *testing.T) {
 	re, ok := rowsEvent.Event.(*RowsEvent)
 	require.True(t, ok)
 	require.Len(t, re.Rows, 1)
-	require.Equal(t, uint32(1), re.Rows[0][0])
+	require.Equal(t, int32(1), re.Rows[0][0])
 }
 
 // TestDbTableFilterRealBinlogNotMatch 使用真实 binlog 数据验证库表过滤：不匹配的表被跳过
@@ -1893,7 +1894,7 @@ func TestDbTableFilterRealBinlogWildcardMatch(t *testing.T) {
 	re, ok := rowsEvent.Event.(*RowsEvent)
 	require.True(t, ok)
 	require.Len(t, re.Rows, 1)
-	require.Equal(t, uint32(1), re.Rows[0][0])
+	require.Equal(t, int32(1), re.Rows[0][0])
 }
 
 // TestDbTableFilterRealBinlogExcludeTable 使用真实 binlog 数据验证排除表
@@ -2040,7 +2041,7 @@ func TestDbTableFilterRealBinlogWithRowsFilter(t *testing.T) {
 	require.True(t, ok)
 	require.Equal(t, 1, re.RowsMatched)
 	require.Len(t, re.Rows, 1)
-	require.Equal(t, uint32(1), re.Rows[0][0])
+	require.Equal(t, int32(1), re.Rows[0][0])
 }
 
 // TestDbTableFilterRealBinlogMatchButRowsFilterNotMatch 使用真实 binlog 数据验证库表匹配但行过滤不匹配
@@ -2141,7 +2142,7 @@ func TestDbTableFilterRealBinlogAllWildcard(t *testing.T) {
 	re, ok := rowsEvent.Event.(*RowsEvent)
 	require.True(t, ok)
 	require.Len(t, re.Rows, 1)
-	require.Equal(t, uint32(1), re.Rows[0][0])
+	require.Equal(t, int32(1), re.Rows[0][0])
 }
 
 // ============================================================
@@ -2173,10 +2174,10 @@ func TestRowsFilterNegativeInt(t *testing.T) {
 
 	rawData := buildRowsEventRawData(0x6c, WRITE_ROWS_EVENTv2, 1, rowData)
 
-	t.Run("过滤大于阈值的uint32值", func(t *testing.T) {
-		// 负数以 uint32 存储，值很大（接近 4294967295）
-		// 过滤条件: col[0] > 4294967200 (只有 -1 和 -5 的 uint32 表示满足)
-		rf, err := NewRowsFilter("col[0] > 4294967200")
+	t.Run("过滤大于阈值的int32值", func(t *testing.T) {
+		// 负数以 int32 有符号存储
+		// 过滤条件: col[0] > -3 (只有 -1 和 10 满足)
+		rf, err := NewRowsFilter("col[0] > -3")
 		require.NoError(t, err)
 
 		e := &RowsEvent{
@@ -2197,16 +2198,16 @@ func TestRowsFilterNegativeInt(t *testing.T) {
 		err = e.FlashbackData2(pos, bodyData)
 		require.NoError(t, err)
 
-		// -1 (0xFFFFFFFF=4294967295) 和 -5 (0xFFFFFFFB=4294967291) 满足 > 4294967200
+		// -1 > -3 满足, -5 < -3 不满足, -100 < -3 不满足, 10 > -3 满足
 		require.Equal(t, 2, e.RowsMatched)
 		require.Len(t, e.Rows, 2)
-		require.Equal(t, uint32(0xFFFFFFFF), e.Rows[0][0]) // -1
-		require.Equal(t, uint32(0xFFFFFFFB), e.Rows[1][0]) // -5
+		require.Equal(t, int32(-1), e.Rows[0][0])
+		require.Equal(t, int32(10), e.Rows[1][0])
 	})
 
-	t.Run("精确匹配负数的uint32表示", func(t *testing.T) {
-		// -100 的 uint32 表示是 4294967196
-		rf, err := NewRowsFilter("col[0] == 4294967196")
+	t.Run("精确匹配负数", func(t *testing.T) {
+		// -100 精确匹配
+		rf, err := NewRowsFilter("col[0] == -100")
 		require.NoError(t, err)
 
 		e := &RowsEvent{
@@ -2227,15 +2228,15 @@ func TestRowsFilterNegativeInt(t *testing.T) {
 		err = e.FlashbackData2(pos, bodyData)
 		require.NoError(t, err)
 
-		// 只有 -100 (uint32: 4294967196) 匹配
+		// 只有 -100 匹配
 		require.Equal(t, 1, e.RowsMatched)
 		require.Len(t, e.Rows, 1)
-		require.Equal(t, uint32(0xFFFFFF9C), e.Rows[0][0])
+		require.Equal(t, int32(-100), e.Rows[0][0])
 	})
 
-	t.Run("小于比较过滤正数", func(t *testing.T) {
-		// 过滤条件: col[0] < 100 (只有 10 满足，因为负数的 uint32 值很大)
-		rf, err := NewRowsFilter("col[0] < 100")
+	t.Run("小于比较过滤", func(t *testing.T) {
+		// 过滤条件: col[0] < 0 (负数都满足: -1, -5, -100)
+		rf, err := NewRowsFilter("col[0] < 0")
 		require.NoError(t, err)
 
 		e := &RowsEvent{
@@ -2256,10 +2257,12 @@ func TestRowsFilterNegativeInt(t *testing.T) {
 		err = e.FlashbackData2(pos, bodyData)
 		require.NoError(t, err)
 
-		// 只有 10 满足 < 100
-		require.Equal(t, 1, e.RowsMatched)
-		require.Len(t, e.Rows, 1)
-		require.Equal(t, uint32(10), e.Rows[0][0])
+		// -1, -5, -100 都满足 < 0，10 不满足
+		require.Equal(t, 3, e.RowsMatched)
+		require.Len(t, e.Rows, 3)
+		require.Equal(t, int32(-1), e.Rows[0][0])
+		require.Equal(t, int32(-5), e.Rows[1][0])
+		require.Equal(t, int32(-100), e.Rows[2][0])
 	})
 }
 
@@ -2278,15 +2281,15 @@ func TestRowsFilterNegativeTinyInt(t *testing.T) {
 
 	// TINYINT: -1=0xFF, -10=0xF6, 5=0x05
 	rowData := []byte{
-		0x00, 0xFF, // row1: -1 (uint8: 255)
-		0x00, 0xF6, // row2: -10 (uint8: 246)
-		0x00, 0x05, // row3: 5 (uint8: 5)
+		0x00, 0xFF, // row1: -1 (int8: -1)
+		0x00, 0xF6, // row2: -10 (int8: -10)
+		0x00, 0x05, // row3: 5 (int8: 5)
 	}
 
 	rawData := buildRowsEventRawData(0x6c, WRITE_ROWS_EVENTv2, 1, rowData)
 
-	// 过滤条件: col[0] > 200 (只有 -1 和 -10 的 uint8 表示满足)
-	rf, err := NewRowsFilter("col[0] > 200")
+	// 过滤条件: col[0] < 0 (只有 -1 和 -10 满足)
+	rf, err := NewRowsFilter("col[0] < 0")
 	require.NoError(t, err)
 
 	e := &RowsEvent{
@@ -2307,11 +2310,11 @@ func TestRowsFilterNegativeTinyInt(t *testing.T) {
 	err = e.FlashbackData2(pos, bodyData)
 	require.NoError(t, err)
 
-	// -1 (255) 和 -10 (246) 满足 > 200
+	// -1 和 -10 满足 < 0
 	require.Equal(t, 2, e.RowsMatched)
 	require.Len(t, e.Rows, 2)
-	require.Equal(t, uint8(255), e.Rows[0][0]) // -1
-	require.Equal(t, uint8(246), e.Rows[1][0]) // -10
+	require.Equal(t, int8(-1), e.Rows[0][0])
+	require.Equal(t, int8(-10), e.Rows[1][0])
 }
 
 // TestRowsFilterNegativeBigInt 验证负数 BIGINT 值的行过滤
@@ -2331,14 +2334,14 @@ func TestRowsFilterNegativeBigInt(t *testing.T) {
 	// -1 小端序: FF FF FF FF FF FF FF FF
 	// 100 小端序: 64 00 00 00 00 00 00 00
 	rowData := []byte{
-		0x00, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, // row1: -1 (uint64: 18446744073709551615)
+		0x00, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, // row1: -1 (int64: -1)
 		0x00, 0x64, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, // row2: 100
 	}
 
 	rawData := buildRowsEventRawData(0x6c, WRITE_ROWS_EVENTv2, 1, rowData)
 
-	// 过滤条件: col[0] > 18446744073709551600 (只有 -1 满足)
-	rf, err := NewRowsFilter("col[0] > 18446744073709551600")
+	// 过滤条件: col[0] < 0 (只有 -1 满足)
+	rf, err := NewRowsFilter("col[0] < 0")
 	require.NoError(t, err)
 
 	e := &RowsEvent{
@@ -2359,10 +2362,10 @@ func TestRowsFilterNegativeBigInt(t *testing.T) {
 	err = e.FlashbackData2(pos, bodyData)
 	require.NoError(t, err)
 
-	// -1 (uint64: 18446744073709551615) 满足 > 18446744073709551600
+	// -1 满足 < 0，100 不满足
 	require.Equal(t, 1, e.RowsMatched)
 	require.Len(t, e.Rows, 1)
-	require.Equal(t, uint64(0xFFFFFFFFFFFFFFFF), e.Rows[0][0])
+	require.Equal(t, int64(-1), e.Rows[0][0])
 }
 
 // ============================================================
@@ -2489,8 +2492,8 @@ func TestCompressedWriteRowsFlashback(t *testing.T) {
 
 	// 验证行数据正确解压和解析
 	require.Len(t, e.Rows, 2)
-	require.Equal(t, uint32(42), e.Rows[0][0])
-	require.Equal(t, uint32(100), e.Rows[1][0])
+	require.Equal(t, int32(42), e.Rows[0][0])
+	require.Equal(t, int32(100), e.Rows[1][0])
 }
 
 // TestCompressedUpdateRowsFlashback 验证 TENDB_UPDATE_ROWS_COMPRESSED_EVENT_V2 的闪回
@@ -2539,8 +2542,8 @@ func TestCompressedUpdateRowsFlashback(t *testing.T) {
 
 	// 验证前后镜像互换
 	require.Len(t, e.Rows, 2)
-	require.Equal(t, uint32(20), e.Rows[0][0]) // 新 BI（原 AI）
-	require.Equal(t, uint32(10), e.Rows[1][0]) // 新 AI（原 BI）
+	require.Equal(t, int32(20), e.Rows[0][0]) // 新 BI（原 AI）
+	require.Equal(t, int32(10), e.Rows[1][0]) // 新 AI（原 BI）
 }
 
 // TestCompressedRowsWithRowsFilter 验证压缩事件 + 行过滤
@@ -2592,8 +2595,8 @@ func TestCompressedRowsWithRowsFilter(t *testing.T) {
 	require.Equal(t, DELETE_ROWS_EVENTv2, e.eventType)
 	require.Equal(t, 2, e.RowsMatched)
 	require.Len(t, e.Rows, 2)
-	require.Equal(t, uint32(50), e.Rows[0][0])
-	require.Equal(t, uint32(100), e.Rows[1][0])
+	require.Equal(t, int32(50), e.Rows[0][0])
+	require.Equal(t, int32(100), e.Rows[1][0])
 }
 
 // TestCompressedUpdateRowsWithRowsFilter 验证压缩 UPDATE 事件 + 行过滤
@@ -2648,8 +2651,8 @@ func TestCompressedUpdateRowsWithRowsFilter(t *testing.T) {
 	require.Equal(t, 1, e.RowsMatched)
 	// 闪回后前后镜像互换: BI=55(原AI), AI=50(原BI)
 	require.Len(t, e.Rows, 2)
-	require.Equal(t, uint32(55), e.Rows[0][0]) // 新 BI（原 AI）
-	require.Equal(t, uint32(50), e.Rows[1][0]) // 新 AI（原 BI）
+	require.Equal(t, int32(55), e.Rows[0][0]) // 新 BI（原 AI）
+	require.Equal(t, int32(50), e.Rows[1][0]) // 新 AI（原 BI）
 }
 
 // TestCompressedRowsWithDbTableFilter 验证压缩事件 + 库表过滤
@@ -2699,7 +2702,7 @@ func TestCompressedRowsWithDbTableFilter(t *testing.T) {
 	// 库表匹配: WRITE → DELETE
 	require.Equal(t, DELETE_ROWS_EVENTv2, e.eventType)
 	require.Len(t, e.Rows, 1)
-	require.Equal(t, uint32(42), e.Rows[0][0])
+	require.Equal(t, int32(42), e.Rows[0][0])
 }
 
 // TestCompressedRowsWithDbTableFilterNotMatch 验证压缩事件 + 库表过滤不匹配
