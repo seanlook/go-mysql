@@ -49,12 +49,17 @@ type BinlogParser struct {
 
 	tableMapOptionalMetaDecodeFunc func([]byte) error
 
-	Flashback                 bool
-	ConvUpdateToWrite         bool
-	TableFilter               *db_table_filter.DbTableFilter
-	RowsFilter                *RowsFilter
-	EventTypeFilter           []EventType
-	TimeFilter                *TimeFilter
+	Flashback         bool
+	ConvUpdateToWrite bool
+	// SkipRowsEventTimeUpdate change rows event timestamp to current time
+	// default fase mean update rows event time for flashback
+	SkipRowsEventTimeUpdate bool
+	TableFilter             *db_table_filter.DbTableFilter
+	RowsFilter              *RowsFilter
+	EventTypeFilter         []EventType
+	TimeFilter              *TimeFilter
+	// TimeFilterQuickStop stop scan when stop-datetime is not match
+	TimeFilterQuickStop       bool
 	RenameRule                *pkg.RenameRule
 	originalChecksumAlgorithm BinlogChecksum
 	flashbackTimestamp        uint32 // 闪回时使用的时间戳，所有闪回事件共享同一时间
@@ -156,6 +161,36 @@ func (p *BinlogParser) parseSingleEvent(r io.Reader, onEvent OnEventFunc) (bool,
 	if h.EventSize < uint32(EventHeaderSize) {
 		return false, errors.Errorf("invalid event header, event size is %d, too small", h.EventSize)
 	}
+
+	// 时间过滤：在读取事件体之前判断，不满足条件的事件直接丢弃事件体数据，跳过解析
+	if p.TimeFilter != nil && h.EventType != FORMAT_DESCRIPTION_EVENT {
+		skipEvent := false
+		stopParsing := false
+		// 闪回模式下，TableMapEvent 跳过时间过滤（使用后续 RowsEvent 的时间戳来判断），
+		// 但仍需继续解析和注册到 p.tables，否则后续 RowsEvent 会找不到对应的 table
+		if p.Flashback && h.EventType == TABLE_MAP_EVENT {
+			// 不做时间过滤，继续往下执行解析和注册
+		} else if h.Timestamp < p.TimeFilter.StartTime {
+			skipEvent = true
+			stopParsing = false
+		} else if p.TimeFilter.StopTime > 0 && h.Timestamp > p.TimeFilter.StopTime {
+			// binlog 中可能存在时间乱序的事件，不能直接终止，需要跳过继续检查后续事件
+			skipEvent = true
+			if p.TimeFilterQuickStop {
+				return true, nil // stop parse
+			}
+		} else if p.TimeFilter.StopPos > 0 && h.LogPos > p.TimeFilter.StopPos {
+			stopParsing = true
+		}
+		if skipEvent || stopParsing {
+			// 丢弃事件体数据，保持 reader 位置正确，跳过解析
+			if _, err = io.CopyN(io.Discard, r, int64(h.EventSize-EventHeaderSize)); err != nil {
+				return false, errors.Errorf("discard event body err %v", err) // skip parse but not stop
+			}
+			return stopParsing, nil
+		}
+	}
+
 	if n, err = io.CopyN(buf, r, int64(h.EventSize-EventHeaderSize)); err != nil {
 		return false, errors.Errorf("get event err %v, need %d but got %d", err, h.EventSize, n)
 	}
@@ -163,24 +198,10 @@ func (p *BinlogParser) parseSingleEvent(r io.Reader, onEvent OnEventFunc) (bool,
 		return false, errors.Errorf("invalid raw data size in event %s, need %d but got %d", h.EventType, h.EventSize, buf.Len())
 	}
 
-	if p.TimeFilter != nil {
-		// 闪回模式下，TableMapEvent 跳过时间过滤（使用后续 RowsEvent 的时间戳来判断），
-		// 但仍需继续解析和注册到 p.tables，否则后续 RowsEvent 会找不到对应的 table
-		if p.Flashback && h.EventType == TABLE_MAP_EVENT {
-			// 不做时间过滤，继续往下执行解析和注册
-		} else if (h.Timestamp < p.TimeFilter.StartTime) && h.EventType != FORMAT_DESCRIPTION_EVENT {
-			return false, nil
-		} else if p.TimeFilter.StopTime > 0 && h.Timestamp > p.TimeFilter.StopTime {
-			return true, nil
-		} else if p.TimeFilter.StopPos > 0 && h.LogPos > p.TimeFilter.StopPos {
-			return true, nil
-		}
-	}
-
 	var rawData []byte
 	rawData = append(rawData, buf.Bytes()...)
 	// 闪回模式下，初始化闪回时间戳（所有事件共享同一时间）
-	if p.Flashback && p.flashbackTimestamp == 0 {
+	if p.Flashback && p.flashbackTimestamp == 0 && !p.SkipRowsEventTimeUpdate {
 		p.flashbackTimestamp = uint32(time.Now().Unix())
 	}
 

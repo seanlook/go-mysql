@@ -34,11 +34,14 @@ func init() {
 	rootCmd.PersistentFlags().StringSliceP("file", "f", nil, "binlog file name")
 	rootCmd.PersistentFlags().String("start-datetime", "", "start datetime")
 	rootCmd.PersistentFlags().String("stop-datetime", "", "stop datetime")
+	rootCmd.PersistentFlags().Bool("time-filter-quick-stop", false, "if true, "+
+		"will stop scan when stop-datetime range not match")
 	rootCmd.PersistentFlags().Int("start-position", 4, "start position for --file or --start-file")
 	rootCmd.PersistentFlags().Int("stop-position", 0, "stop position for --file or --stop-file")
 	_ = viper.BindPFlag("file", rootCmd.PersistentFlags().Lookup("file"))
 	_ = viper.BindPFlag("start-datetime", rootCmd.PersistentFlags().Lookup("start-datetime"))
 	_ = viper.BindPFlag("stop-datetime", rootCmd.PersistentFlags().Lookup("stop-datetime"))
+	_ = viper.BindPFlag("time-filter-quick-stop", rootCmd.PersistentFlags().Lookup("time-filter-quick-stop"))
 	_ = viper.BindPFlag("start-position", rootCmd.PersistentFlags().Lookup("start-position"))
 	_ = viper.BindPFlag("stop-position", rootCmd.PersistentFlags().Lookup("stop-position"))
 
@@ -64,10 +67,6 @@ func init() {
 	rootCmd.PersistentFlags().String("rows-filter", "", "col[0] == 'abc'")
 	rootCmd.PersistentFlags().String("rows-filter-from-csv", "", "file csv format like:col[0],col[1]\nxxx,100\nyyy,200")
 	rootCmd.PersistentFlags().StringSlice("rows-event-type", nil, "insert,update,delete")
-	//rootCmd.PersistentFlags().String("query-event-handler", "", "keep | ignore | error | safe")
-	//rootCmd.PersistentFlags().String("statement-match-error", "", "Decide how to handle the query events like statement or ddl.")
-	//rootCmd.PersistentFlags().String("statement-match-ignore", "", "Decide how to handle the query events like statement or ddl.")
-	//rootCmd.PersistentFlags().String("statement-match-ignore-force", "", "Decide how to handle the query events like statement or ddl.")
 	_ = viper.BindPFlag("server-id", rootCmd.PersistentFlags().Lookup("server-id"))
 	_ = viper.BindPFlag("rows-filter", rootCmd.PersistentFlags().Lookup("rows-filter"))
 	_ = viper.BindPFlag("rows-filter-from-csv", rootCmd.PersistentFlags().Lookup("rows-filter-from-csv"))
@@ -76,8 +75,10 @@ func init() {
 
 	rootCmd.PersistentFlags().StringSlice("rewrite-db", nil, "Rewrite the row event to point so that it can be applied to a new database")
 	rootCmd.PersistentFlags().Bool("conv-rows-update-to-write", false, "change update event to write")
+	rootCmd.PersistentFlags().Bool("rows-event-time-update", false, "modify rows event timestamp")
 	_ = viper.BindPFlag("rewrite-db", rootCmd.PersistentFlags().Lookup("rewrite-db"))
 	_ = viper.BindPFlag("conv-rows-update-to-write", rootCmd.PersistentFlags().Lookup("conv-rows-update-to-write"))
+	_ = viper.BindPFlag("rows-event-time-update", rootCmd.PersistentFlags().Lookup("rows-event-time-update"))
 
 	rootCmd.PersistentFlags().String("parallel-type", "mysqlbinlog", "database | table | database_hash | table_hash | key_hash")
 	rootCmd.PersistentFlags().Int("binlog-row-event-max-size", 0, "binlog-row-event-max-size")

@@ -165,6 +165,7 @@ func TestFlashbackTimestampUpdate(t *testing.T) {
 	// 创建闪回模式的 parser
 	parser := NewBinlogParser()
 	parser.Flashback = true
+	parser.SkipRowsEventTimeUpdate = false
 	parser.PrintEventInfo = &PrintEventInfo{}
 
 	var events []*BinlogEvent

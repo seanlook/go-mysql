@@ -37,6 +37,7 @@ func parseBinlogFile() error {
 
 	p.Flashback = viper.GetBool("flashback")
 	p.ConvUpdateToWrite = viper.GetBool("conv-rows-update-to-write")
+	p.SkipRowsEventTimeUpdate = viper.GetBool("skip-rows-event-time-update")
 	eventTypeFilter := viper.GetStringSlice("rows-event-type")
 	if len(eventTypeFilter) > 0 {
 		for _, evt := range eventTypeFilter {
@@ -78,6 +79,7 @@ func parseBinlogFile() error {
 			return errors.WithMessage(err, "parse stop-datetime")
 		}
 		timeFilter.StopTime = uint32(stopDatetime.Local().Unix())
+		p.TimeFilterQuickStop = viper.GetBool("time-filter-quick-stop")
 	}
 	p.TimeFilter = &replication.TimeFilter{}
 	_ = copier.Copy(p.TimeFilter, timeFilter) // 这里因为 startPos, stopPos是针对不同的 file 生效
