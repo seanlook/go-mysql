@@ -103,6 +103,7 @@ rows-filter 过滤有两种方式：
 ## query-match-error and query-match-ignore
 ```
 --query-match-ignore '(?ism)(CREATE\s.*\sPROCEDURE|CREATE\s.*\sFUNCTION|^GRANT\s.*\sON\s)'
+--query-match-ignore='(?i)^(create|drop)\s.*(procedure|function|view)\s'
 --query-match-ignore 'PROCEDURE|FUNCTION'
 ```
 

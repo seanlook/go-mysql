@@ -2,21 +2,11 @@ package replication
 
 import (
 	"github.com/pingcap/tidb/pkg/parser/ast"
-	"github.com/samber/lo"
 )
 
 type SchemaNode struct {
 	Schema string
 	Table  string
-}
-
-// alter table add column xxx  -> alter table drop column xxx
-// alter table add index, drop index -> ok
-// drop table, truncate table, alter table modify column xxx, drop column -> no
-
-var allowedStmtForTableFilter = []ast.AlterTableType{
-	ast.AlterTableDropIndex,
-	ast.AlterTableAddConstraint,
 }
 
 func ParseStmt(stmt ast.StmtNode) (allowed bool, ns []*SchemaNode) {
@@ -35,28 +25,35 @@ func ParseStmt(stmt ast.StmtNode) (allowed bool, ns []*SchemaNode) {
 			Table:  t.Table.Name.String(),
 		}
 		ns = []*SchemaNode{n}
-		var allSpecs []ast.AlterTableType
+		notAllowedAlterExists := false // 只要有一个不符合 flashback 条件，就永久false
 		if len(t.Specs) > 0 {
 			for _, spec := range t.Specs {
-				allSpecs = append(allSpecs, spec.Tp)
 				if spec.Tp == ast.AlterTableAddColumns {
-					// 如果是增加在最后一列，是可以闪回的
-					allowed = true
+					if spec.Position == nil || spec.Position.Tp == ast.ColumnPositionNone {
+						// 如果是增加在最后一列，是可以闪回的
+						// 判断 add column 没有带 after/first，则认为是最后一列
+						continue
+					}
+					notAllowedAlterExists = true
 					//fmt.Println("AlterTableAddColumns", spec.Name, spec.Text())
-				} else if spec.Tp == ast.AlterTableDropIndex {
-					//fmt.Println("AlterTableDropIndex", spec.IndexName, spec.Text())
-				} else if spec.Tp == ast.AlterTableAddConstraint {
-					//fmt.Println("AlterTableAddConstraint-Index", spec.IndexName, spec.OriginalText())
+				} else if spec.Tp == ast.AlterTableDropIndex || spec.Tp == ast.AlterTableAddConstraint {
+					// 索引操作是可以闪回的
 				} else {
 					//fmt.Println("AlterTableStmt-XX", spec.Tp, spec.OriginalText())
+					notAllowedAlterExists = true
 				}
 			}
 		}
-		if lo.Every(allowedStmtForTableFilter, allSpecs) {
-			allowed = true
+		if notAllowedAlterExists {
+			allowed = false
 		}
 	case *ast.DropTableStmt:
-		allowed = false // set false explicitly
+		if t.IsView {
+			// drop view ...
+			allowed = true
+		} else {
+			allowed = false // set false explicitly
+		}
 		ns = make([]*SchemaNode, len(t.Tables))
 		for i, table := range t.Tables {
 			ns[i] = &SchemaNode{
@@ -69,6 +66,13 @@ func ParseStmt(stmt ast.StmtNode) (allowed bool, ns []*SchemaNode) {
 		n := &SchemaNode{
 			Schema: t.Table.Schema.String(),
 			Table:  t.Table.Name.String(),
+		}
+		ns = []*SchemaNode{n}
+	case *ast.OptimizeTableStmt:
+		allowed = true
+		n := &SchemaNode{
+			Schema: t.Tables[0].Schema.String(),
+			Table:  t.Tables[0].Name.String(),
 		}
 		ns = []*SchemaNode{n}
 	case *ast.TruncateTableStmt:
@@ -91,6 +95,29 @@ func ParseStmt(stmt ast.StmtNode) (allowed bool, ns []*SchemaNode) {
 		n := &SchemaNode{
 			Schema: t.Table.Schema.String(),
 			Table:  t.Table.Name.String(),
+		}
+		ns = []*SchemaNode{n}
+	case *ast.DropProcedureStmt:
+		// tiparser does not support FUNCTION
+		allowed = true
+		n := &SchemaNode{
+			Schema: t.ProcedureName.Schema.String(),
+			Table:  t.ProcedureName.Name.String(),
+		}
+		ns = []*SchemaNode{n}
+	case *ast.ProcedureInfo:
+		// can not find the create_procedure stmt
+		allowed = true
+		n := &SchemaNode{
+			Schema: t.ProcedureName.Schema.String(),
+			Table:  t.ProcedureName.Name.String(),
+		}
+		ns = []*SchemaNode{n}
+	case *ast.CreateViewStmt:
+		allowed = true
+		n := &SchemaNode{
+			Schema: t.ViewName.Schema.String(),
+			Table:  t.ViewName.Name.String(),
 		}
 		ns = []*SchemaNode{n}
 	case *ast.InsertStmt:

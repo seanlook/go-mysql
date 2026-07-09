@@ -695,9 +695,9 @@ func (p *BinlogParser) parseEventRewrite(h *EventHeader, data []byte, rawData *[
 			if bytes.Equal(qe.Query, []byte("BEGIN")) || bytes.Equal(qe.Query, []byte("COMMIT")) {
 				//fmt.Fprintf(iowriter, "%s%s\n", r.Query, Delimiter)
 			}
+			queryStr := string(qe.Query)
 			sqlParser := parser.New()
-
-			stmts, _, err := sqlParser.Parse(string(qe.Query), "", "")
+			stmts, _, err := sqlParser.Parse(queryStr, "", "")
 			if err != nil {
 				// 当有遇到一些复杂存储过程，parser 会解析失败，进入正则匹配逻辑
 				//fmt.Printf("parse query got error: %v,\nquery:%s\n", err, string(qe.Query))
@@ -707,30 +707,45 @@ func (p *BinlogParser) parseEventRewrite(h *EventHeader, data []byte, rawData *[
 				}
 				qe.PrintType = PrintTypeIgnore
 			}
+			globalAllowed := true
+			dbTableName := ""
 			for _, stmt := range stmts {
+				if !globalAllowed {
+					break
+				}
 				allowed, nodes := ParseStmt(stmt)
-				// allowed is true 代表 ddl只是 add index,drop index，是可以忽略的
+				// allowed is true 代表 ddl 只是 add index,drop index，是可以忽略的
+				// 一个 alter 可能包含多个子语句，涉及多个表。只要有一个不符合就要 globalAllowed=false
 				for _, node := range nodes {
 					if node.Schema == "" {
 						node.Schema = string(qe.Schema)
 					}
 					qe.dbTable = nodes
-					//fmt.Printf("parsed table name <%s.%s>\n", node.Schema, node.Table)
-					dbTableName := fmt.Sprintf(`%s.%s`, node.Schema, node.Table)
+					// fmt.Printf("parsed table name <%s.%s>\n", node.Schema, node.Table)
+					dbTableName = fmt.Sprintf(`%s.%s`, node.Schema, node.Table)
 					tbMatch, _ := p.TableFilter.Compiled.TbFilter.MatchString(dbTableName)
 					if tbMatch {
 						qe.DbTableMatched = true
 						if allowed {
 							qe.PrintType = PrintTypeIgnore
-							//e = qe // 增加了 print type 属性
 							continue
 						}
-						if p.Flashback {
-							return nil, nil, errors.Errorf("flashback rows found statement [%s] table matched: [%s]",
-								qe.Query, dbTableName)
+						if err = p.QueryFilter.Match(qe.Query); err == nil { // 这里尽可能放行
+							qe.PrintType = PrintTypeIgnore
+							continue
 						}
+						globalAllowed = false
+						break
 					}
 				}
+			}
+			if globalAllowed {
+				qe.PrintType = PrintTypeIgnore
+				qe.DbTableMatched = false
+			} else {
+				qe.PrintType = PrintTypeNormal // recover to normal
+				return nil, nil, errors.Errorf("query event is not allowed: [%s], table: [%s]",
+					queryStr, dbTableName)
 			}
 		}
 	} else if te, ok := e.(*TableMapEvent); ok {
