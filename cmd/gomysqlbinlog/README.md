@@ -98,6 +98,14 @@ rows-filter 过滤有两种方式：
   col[0] == 'aaa' and col[1] > 100
   ```
 
+## rows-event-type
+
+## query-match-error and query-match-ignore
+```
+--query-match-ignore '(?ism)(CREATE\s.*\sPROCEDURE|CREATE\s.*\sFUNCTION|^GRANT\s.*\sON\s)'
+--query-match-ignore 'PROCEDURE|FUNCTION'
+```
+
 ## gomysqlbinlog flashback 闪回
 ```
 ./gomysqlbinlog -v 1 --flashback --databases db1 --tables tb1 -f binlog.00002 -r binlog.00002.back.sql

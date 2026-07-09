@@ -56,6 +56,7 @@ type BinlogParser struct {
 	SkipRowsEventTimeUpdate bool
 	TableFilter             *db_table_filter.DbTableFilter
 	RowsFilter              *RowsFilter
+	QueryFilter             *QueryEventFilter
 	EventTypeFilter         []EventType
 	TimeFilter              *TimeFilter
 	// TimeFilterQuickStop stop scan when stop-datetime is not match

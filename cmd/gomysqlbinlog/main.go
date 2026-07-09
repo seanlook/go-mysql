@@ -52,6 +52,13 @@ func parseBinlogFile() error {
 			}
 		}
 	}
+	p.QueryFilter = &replication.QueryEventFilter{
+		QueryMatchError:  viper.GetString("query-match-error"),
+		QueryMatchIgnore: viper.GetString("query-match-ignore"),
+	}
+	if err := p.QueryFilter.Compile(); err != nil {
+		return err
+	}
 
 	renameRules := viper.GetStringSlice("rewrite-db")
 	if len(renameRules) > 0 {

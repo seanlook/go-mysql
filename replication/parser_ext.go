@@ -9,6 +9,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"strings"
 	"time"
@@ -33,6 +34,7 @@ type PrintEventInfo struct {
 	idempotent              bool
 	disableLogBin           bool
 	disableForeignKeyChecks bool
+	skipGtids               bool
 	autocommit              bool
 	delimiter               string
 	rowsStart               string
@@ -52,8 +54,6 @@ type PrintEventInfo struct {
 	auto_increment_increment uint64
 	auto_increment_offset    uint64
 
-	// True if the --skip-gtids flag was specified.
-	skip_gtids bool
 	/* printed_fd_event
 	   This is set whenever a Format_description_event is printed.
 	   Later, when an event is printed in base64, this flag is tested: if
@@ -93,6 +93,7 @@ func (i *PrintEventInfo) Init() {
 	i.idempotent = viper.GetBool("idempotent")
 	i.disableLogBin = viper.GetBool("disable-log-bin")
 	i.disableForeignKeyChecks = viper.GetBool("disable-foreign-key-checks")
+	i.skipGtids = viper.GetBool("skip-gtids")
 	i.autocommit = viper.GetBool("autocommit")
 	i.charset = viper.GetString("set-charset")
 	i.verboseLevel = viper.GetInt("verbose")
@@ -165,6 +166,10 @@ func (p *BinlogParser) ParseFileAndPrint(fileName string, resultFileName string)
 			buf.WriteString(p.rowsStart + "\n")
 			buf.WriteString(b64.StdEncoding.EncodeToString(e.RawData) + "\n")
 			buf.WriteString(p.rowsEnd + "\n")
+			if p.skipGtids {
+				buf.WriteString("/*!50616 SET @@SESSION.GTID_NEXT='AUTOMATIC'*/")
+				buf.WriteString(p.delimiter + "\n")
+			}
 
 			if p.Flashback {
 				ioWriter.SetHeader(buf.Bytes())
@@ -434,6 +439,46 @@ type RowsFilter struct {
 	rowsMatch int
 }
 
+type QueryEventFilter struct {
+	QueryMatchError  string
+	QueryMatchIgnore string
+
+	reMatchError  *regexp.Regexp
+	reMatchIgnore *regexp.Regexp
+}
+
+func (q *QueryEventFilter) Compile() error {
+	if q.QueryMatchIgnore != "" {
+		re, err := regexp.Compile(q.QueryMatchIgnore)
+		if err != nil {
+			return errors.WithMessagef(err, "query-match-ignore:%s", q.QueryMatchIgnore)
+		}
+		q.reMatchIgnore = re
+	}
+	if q.QueryMatchError != "" {
+		re, err := regexp.Compile(q.QueryMatchError)
+		if err != nil {
+			return errors.WithMessagef(err, "query-match-error:%s", q.QueryMatchError)
+		}
+		q.reMatchError = re
+	}
+	return nil
+}
+
+func (q *QueryEventFilter) Match(query []byte) error {
+	if q.reMatchError != nil {
+		if q.reMatchError.Match(query) {
+			return errors.Errorf("query match error: %s", query)
+		}
+	}
+	if q.reMatchIgnore != nil {
+		if q.reMatchIgnore.Match(query) {
+			return nil
+		}
+	}
+	return errors.Errorf("unknown query: %s", string(query))
+}
+
 type TimeFilter struct {
 	StartTime uint32
 	StopTime  uint32
@@ -651,11 +696,16 @@ func (p *BinlogParser) parseEventRewrite(h *EventHeader, data []byte, rawData *[
 				//fmt.Fprintf(iowriter, "%s%s\n", r.Query, Delimiter)
 			}
 			sqlParser := parser.New()
+
 			stmts, _, err := sqlParser.Parse(string(qe.Query), "", "")
 			if err != nil {
-				fmt.Printf("parse query(%s) err %v, will skip this event\n", qe.Query, err)
-				return nil, nil, err
-				//return nil
+				// 当有遇到一些复杂存储过程，parser 会解析失败，进入正则匹配逻辑
+				//fmt.Printf("parse query got error: %v,\nquery:%s\n", err, string(qe.Query))
+				if err = p.QueryFilter.Match(qe.Query); err != nil {
+					fmt.Printf("query event error: %v\n", err)
+					return nil, nil, err
+				}
+				qe.PrintType = PrintTypeIgnore
 			}
 			for _, stmt := range stmts {
 				allowed, nodes := ParseStmt(stmt)

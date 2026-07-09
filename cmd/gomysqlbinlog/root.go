@@ -53,6 +53,7 @@ func init() {
 	rootCmd.PersistentFlags().BoolP("idempotent", "i", false, "idempotent mode")
 	rootCmd.PersistentFlags().Bool("disable-log-bin", false, "disable sql_log_bin")
 	rootCmd.PersistentFlags().Bool("disable-foreign-key-checks", false, "set session foreign_key_checks=0")
+	rootCmd.PersistentFlags().Bool("skip-gtids", false, "replace GTID_NEXT to 'AUTOMATIC'")
 
 	//rootCmd.PersistentFlags().Bool("rows-strict", false, "no statement query allowed")
 	_ = viper.BindPFlag("databases", rootCmd.PersistentFlags().Lookup("databases"))
@@ -62,6 +63,8 @@ func init() {
 	_ = viper.BindPFlag("flashback", rootCmd.PersistentFlags().Lookup("flashback"))
 	_ = viper.BindPFlag("idempotent", rootCmd.PersistentFlags().Lookup("idempotent"))
 	_ = viper.BindPFlag("disable-log-bin", rootCmd.PersistentFlags().Lookup("disable-log-bin"))
+	_ = viper.BindPFlag("disable-foreign-key-checks", rootCmd.PersistentFlags().Lookup("disable-foreign-key-checks"))
+	_ = viper.BindPFlag("skip-gtids", rootCmd.PersistentFlags().Lookup("skip-gtids"))
 
 	rootCmd.PersistentFlags().Int("server-id", 0, "Extract only binlog entries created by the server having the given id")
 	rootCmd.PersistentFlags().String("rows-filter", "", "col[0] == 'abc'")
@@ -71,6 +74,12 @@ func init() {
 	_ = viper.BindPFlag("rows-filter", rootCmd.PersistentFlags().Lookup("rows-filter"))
 	_ = viper.BindPFlag("rows-filter-from-csv", rootCmd.PersistentFlags().Lookup("rows-filter-from-csv"))
 	_ = viper.BindPFlag("rows-event-type", rootCmd.PersistentFlags().Lookup("rows-event-type"))
+
+	rootCmd.PersistentFlags().String("query-match-error", "", "query event regex match for error exit")
+	rootCmd.PersistentFlags().String("query-match-ignore", "", "query event regex match for ignore")
+	_ = viper.BindPFlag("query-match-error", rootCmd.PersistentFlags().Lookup("query-match-error"))
+	_ = viper.BindPFlag("query-match-ignore", rootCmd.PersistentFlags().Lookup("query-match-ignore"))
+
 	//_ = viper.BindPFlag("query-event-handler", rootCmd.PersistentFlags().Lookup("query-event-handler"))
 
 	rootCmd.PersistentFlags().StringSlice("rewrite-db", nil, "Rewrite the row event to point so that it can be applied to a new database")
