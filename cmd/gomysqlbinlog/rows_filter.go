@@ -175,9 +175,5 @@ func (b *rowsFilterBuilder) buildRowsFilterExprFromCsv(csvInput *bytes.Buffer) (
 		}
 		rowsFilterExpr = strings.Join(rowsFilterExprs, " or ")
 	}
-	if b.hasString && b.hasNumber && b.buildCount < 2 {
-		b.allNumberToString = true
-		return b.buildRowsFilterExprFromCsv(bytes.NewBufferString(rowsFilterExpr))
-	}
 	return rowsFilterExpr, nil
 }
